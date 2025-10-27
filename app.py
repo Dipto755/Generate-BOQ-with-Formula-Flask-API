@@ -492,26 +492,7 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                 print(f"✅ SQRT result: {result}")
             return result
         
-        # Handle SUM function
-        if formula.upper().startswith('SUM('):
-            logger.info("Detected SUM function")
-            print("🔄 Processing SUM function...")
-            result = evaluate_sum_function(formula, session_id, current_sheet=current_sheet)
-            if result is not None:
-                logger.info(f"SUM function result: {result}")
-                print(f"✅ SUM result: {result}")
-            return result
-
-        # Handle AVERAGE function
-        if formula.upper().startswith('AVERAGE('):
-            logger.info("Detected AVERAGE function")
-            print("🔄 Processing AVERAGE function...")
-            result = evaluate_average_function(formula, session_id, current_sheet=current_sheet)
-            if result is not None:
-                logger.info(f"AVERAGE function result: {result}")
-                print(f"✅ AVERAGE result: {result}")
-            return result
-
+        
         # Handle complex expressions with SUM/AVERAGE and arithmetic
         # Replace SUM(...) and AVERAGE(...) calls with their evaluated results before arithmetic
         temp_formula = formula

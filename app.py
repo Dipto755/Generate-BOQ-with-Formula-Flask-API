@@ -965,12 +965,22 @@ def resolve_cell_reference(cell_ref, session_id, current_sheet=None):
                     "sheet": sheet_name,
                     "cell": cell_address
                 })
-                
-                print(f"Formula doc found for {cell_ref}: {formula_doc}")
-                
-                if formula_doc and "formula" in formula_doc:
-                    # Recursively evaluate this formula and pass the current sheet for relative refs
-                    return evaluate_excel_formula(formula_doc["formula"], session_id, current_sheet=sheet_name)
+
+                if formula_doc:
+                    # Check if it's a formula or a value
+                    if formula_doc.get("is_formula"):
+                        # It's a formula - evaluate it recursively
+                        formula = formula_doc.get("formula")
+                        if formula:
+                            logger.debug(f"Cell {cell_address} contains formula: {formula}")
+                            print(f"Formula doc found for {current_sheet}!{cell_address}: {formula_doc}")
+                            return evaluate_excel_formula(formula, session_id, current_sheet=sheet_name)
+                    else:
+                        # It's a value - return directly
+                        value = formula_doc.get("value")
+                        logger.debug(f"Cell {cell_address} contains value: {value}")
+                        print(f"Value doc found for {current_sheet}!{cell_address}: value={value}")
+                        return value
                 
         return None
     except Exception as e:
@@ -1679,27 +1689,54 @@ def calculate_main_carriageway():
         results = []
         errors = []
         
-        # Calculate values for each formula
+        # Calculate values for each formula/value
         for formula_doc in formulas:
             try:
                 cell = formula_doc.get("cell")
-                formula = formula_doc.get("formula")
+                sheet = formula_doc.get("sheet")
+                is_formula = formula_doc.get("is_formula")
                 
-                if not cell or not formula:
+                if not cell:
                     errors.append({
-                        "cell": cell or "unknown",
-                        "error": "Missing cell or formula in database document"
+                        "cell": "unknown",
+                        "error": "Missing cell in database document"
                     })
                     continue
                 
-                value = evaluate_excel_formula(formula, session_id, current_sheet=formula_doc.get("sheet"))
-                
-                results.append({
-                    "cell": cell,
-                    "formula": formula,
-                    "value": value,
-                    "success": value is not None
-                })
+                # Check if it's a formula or direct value
+                if is_formula:
+                    # It's a formula - evaluate it
+                    formula = formula_doc.get("formula")
+                    if not formula:
+                        errors.append({
+                            "cell": cell,
+                            "sheet": sheet,
+                            "error": "Formula field is null but is_formula is true"
+                        })
+                        continue
+                    
+                    value = evaluate_excel_formula(formula, session_id, current_sheet=sheet)
+                    
+                    results.append({
+                        "cell": cell,
+                        "sheet": sheet,
+                        "is_formula": True,
+                        "formula": formula,
+                        "value": value,
+                        "success": value is not None
+                    })
+                else:
+                    # It's a direct value - no calculation needed
+                    value = formula_doc.get("value")
+                    
+                    results.append({
+                        "cell": cell,
+                        "sheet": sheet,
+                        "is_formula": False,
+                        "formula": None,
+                        "value": value,
+                        "success": True
+                    })
                 
             except Exception as calc_error:
                 errors.append({
@@ -1765,23 +1802,40 @@ def calculate_main_carriageway_single_cell():
         })
         
         if not formula_doc:
-            return jsonify({"error": f"No formula found for cell {cell} in sheet {sheet_name}"}), 404
+            return jsonify({"error": f"No document found for cell {cell} in sheet {sheet_name}"}), 404
+
+        # Check if it's a formula or direct value
+        if formula_doc.get("is_formula"):
+            # It's a formula - evaluate it
+            formula = formula_doc.get("formula")
+            if not formula:
+                return jsonify({"error": f"Formula field is null for cell {cell}"}), 500
             
-        # Get the formula from the document
-        formula = formula_doc.get("formula")
-        if not formula:
-            return jsonify({"error": f"No formula found in document for cell {cell}"}), 500
-        
-        # Calculate the value using the formula
-        value = evaluate_excel_formula(formula, session_id, current_sheet=sheet_name)
-        
-        # Format the response
-        result = {
-            "cell": cell,
-            "formula": formula,
-            "value": value,
-            "success": value is not None
-        }
+            # Calculate the value using the formula
+            value = evaluate_excel_formula(formula, session_id, current_sheet=sheet_name)
+            
+            # Format the response
+            result = {
+                "cell": cell,
+                "sheet": sheet_name,
+                "is_formula": True,
+                "formula": formula,
+                "value": value,
+                "success": value is not None
+            }
+        else:
+            # It's a direct value - no calculation needed
+            value = formula_doc.get("value")
+            
+            # Format the response
+            result = {
+                "cell": cell,
+                "sheet": sheet_name,
+                "is_formula": False,
+                "formula": None,
+                "value": value,
+                "success": True
+            }
         
         return jsonify(result)
         

@@ -472,6 +472,25 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                 print("⚠️ LOOKUP evaluation failed")
             return result
         
+        # Handle ROUNDUP function
+        if formula.upper().startswith('ROUNDUP('):
+            logger.info("Detected ROUNDUP function")
+            print("🔄 Processing ROUNDUP function...")
+            result = evaluate_roundup_function(formula, session_id, current_sheet=current_sheet)
+            if result is not None:
+                logger.info(f"ROUNDUP function result: {result}")
+                print(f"✅ ROUNDUP result: {result}")
+            return result
+
+        # Handle SQRT function
+        if formula.upper().startswith('SQRT('):
+            logger.info("Detected SQRT function")
+            print("🔄 Processing SQRT function...")
+            result = evaluate_sqrt_function(formula, session_id, current_sheet=current_sheet)
+            if result is not None:
+                logger.info(f"SQRT function result: {result}")
+                print(f"✅ SQRT result: {result}")
+            return result
         
         # Handle SUM function
         if formula.upper().startswith('SUM('):
@@ -595,7 +614,7 @@ def evaluate_if_function(formula, session_id, current_sheet=None):
         print(f"False value str --> {false_value_str}")
         
         # Resolve condition
-        condition_str = resolve_all_cell_references(condition_str.strip(), session_id)
+        condition_str = resolve_all_cell_references(condition_str.strip(), session_id, current_sheet=current_sheet)
 
         # Check if condition contains OR function
         if condition_str.upper().startswith('OR('):
@@ -646,10 +665,10 @@ def evaluate_if_function(formula, session_id, current_sheet=None):
             except Exception:
                 logger.debug(f"safe_eval failed for branch expression: {branch_expr}")
             # fallback to resolve_value of original branch (in case of strings)
-            return resolve_value(branch_expr, session_id)
+            return resolve_value(branch_expr, session_id, current_sheet)
         
         # No arithmetic — resolve as value (literal, cell ref resolved already)
-        return resolve_value(branch_expr, session_id)
+        return resolve_value(branch_expr, session_id, current_sheet)
             
     except Exception as e:
         print(f"Error evaluating IF function: {e}")
@@ -763,6 +782,74 @@ def evaluate_average_function(formula, session_id, current_sheet=None):
         
     except Exception as e:
         logger.error(f"Error evaluating AVERAGE function: {e}")
+        return None
+
+
+def evaluate_roundup_function(formula, session_id, current_sheet=None):
+    """Evaluate Excel ROUNDUP function: ROUNDUP(number, num_digits)"""
+    try:
+        match = re.match(r'ROUNDUP\((.*)\)', formula, re.IGNORECASE)
+        if not match:
+            return None
+        
+        content = match.group(1)
+        parts = split_formula_parts(content)
+        
+        print(f"^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ROUNDUP function got {len(parts)}  <<<<----- parts:", parts)
+        
+        if len(parts) != 2:
+            return None
+        
+        number_str, digits_str = parts
+        
+        # Resolve and evaluate the number part (might contain nested formulas)
+        number_resolved = resolve_all_cell_references(number_str.strip(), session_id, current_sheet)
+        
+        # Check if it contains nested functions
+        if any(func in number_resolved.upper() for func in ['IF(', 'SQRT(', 'SUM(', 'AVERAGE(']):
+            number = evaluate_excel_formula(number_resolved, session_id, current_sheet)
+        else:
+            number = safe_eval(number_resolved)
+        
+        # Resolve digits
+        digits_resolved = resolve_all_cell_references(digits_str.strip(), session_id, current_sheet)
+        digits = safe_eval(digits_resolved)
+        
+        if number is None or digits is None:
+            return None
+        
+        import math
+        multiplier = 10 ** int(digits)
+        return math.ceil(float(number) * multiplier) / multiplier
+        
+    except Exception as e:
+        logger.error(f"Error evaluating ROUNDUP function: {e}")
+        return None
+
+
+def evaluate_sqrt_function(formula, session_id, current_sheet=None):
+    """Evaluate Excel SQRT function: SQRT(number)"""
+    try:
+        match = re.match(r'SQRT\((.*)\)', formula, re.IGNORECASE)
+        if not match:
+            return None
+        
+        content = match.group(1)
+        
+        # Resolve cell references
+        resolved = resolve_all_cell_references(content.strip(), session_id, current_sheet)
+        
+        # Evaluate the expression
+        number = safe_eval(resolved)
+        
+        if number is None:
+            return None
+        
+        import math
+        return math.sqrt(float(number))
+        
+    except Exception as e:
+        logger.error(f"Error evaluating SQRT function: {e}")
         return None
 
 
@@ -881,7 +968,7 @@ def evaluate_condition(condition_str):
         return False
 
 
-def resolve_value(value_str, session_id):
+def resolve_value(value_str, session_id, current_sheet=None):
     """Resolve a value (could be string literal, cell reference, or number)"""
     value_str = value_str.strip()
     
@@ -892,7 +979,7 @@ def resolve_value(value_str, session_id):
     
     # Cell reference
     if '!' in value_str:
-        return resolve_cell_reference(value_str, session_id)
+        return resolve_cell_reference(value_str, session_id, current_sheet)
     
     # Number
     try:
@@ -1055,6 +1142,21 @@ def resolve_all_cell_references(formula, session_id, current_sheet=None):
             result = evaluate_average_function(match.group(0), session_id, current_sheet)
             return str(result) if result is not None else match.group(0)
         resolved = re.sub(avg_pattern, replace_avg, resolved, flags=re.IGNORECASE)
+        
+    # Handle ROUNDUP
+    if 'ROUNDUP(' in resolved.upper():
+        def replace_roundup(match):
+            result = evaluate_roundup_function(match.group(0), session_id, current_sheet)
+            return str(result) if result is not None else match.group(0)
+        resolved = re.sub(r'ROUNDUP\((?:[^()]+|\([^()]*\))*\)', replace_roundup, resolved, flags=re.IGNORECASE)
+
+    # Handle SQRT (with nested parentheses support)
+    if 'SQRT(' in resolved.upper():
+        def replace_sqrt(match):
+            result = evaluate_sqrt_function(match.group(0), session_id, current_sheet)
+            return str(result) if result is not None else match.group(0)
+        resolved = re.sub(r'SQRT\((?:[^()]+|\([^()]*\))*\)', replace_sqrt, resolved, flags=re.IGNORECASE)
+
 
     return resolved
 
@@ -1064,6 +1166,9 @@ def safe_eval(expression):
     try:
         # Remove any quotes around strings
         expression = expression.strip()
+        
+        # Convert Excel exponentiation (^) to Python (**)
+        expression = expression.replace('^', '**')
         
         # Don't process if it contains Excel functions
         if any(func in expression.upper() for func in ['IF(', 'OR(', 'AND(']):

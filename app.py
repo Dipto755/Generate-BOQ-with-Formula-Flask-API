@@ -1904,110 +1904,200 @@ def get_session(session_id):
 
 @app.route("/api/calculate-main-carriageway", methods=["POST"])
 def calculate_main_carriageway():
-    """Calculate values using Main Carriageway formulas"""
+    """Calculate values using Main Carriageway formulas - ROW BY ROW"""
     try:
         data = request.json
         session_id = data.get("session_id")
+        sheet_name = data.get("sheet_name")  # Get sheet name from payload
         calculation_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # Unique ID for this calculation
 
         if not session_id:
             return jsonify({"error": "Session ID is required"}), 400
+        
+        if not sheet_name:
+            return jsonify({"error": "Sheet name is required"}), 400
 
         # Verify file upload session exists
         session = file_sessions_collection.find_one({"session_id": session_id})
         if not session:
             return jsonify({"error": f"No file upload session found with ID: {session_id}"}), 404
 
-        # Get formulas from database
-        formulas = list(main_carriageway_formulas_collection.find({}))
+        # Get formulas from database for the specified sheet
+        formulas = list(main_carriageway_formulas_collection.find({"sheet": sheet_name}))
         if not formulas:
-            return jsonify({"error": "No formulas found in database"}), 404
-
-        results = []
-        errors = []
+            return jsonify({"error": f"No formulas found for sheet '{sheet_name}' in database"}), 404
         
-        # Calculate values for each formula/value
+        logger.info(f"Found {len(formulas)} formulas for sheet '{sheet_name}'")
+        print(f"📄 Sheet: {sheet_name}")
+
+        # Group cells by row number
+        rows_dict = {}
         for formula_doc in formulas:
-            try:
-                cell = formula_doc.get("cell")
-                sheet = formula_doc.get("sheet")
-                is_formula = formula_doc.get("is_formula")
-                
-                if not cell:
-                    errors.append({
-                        "cell": "unknown",
-                        "error": "Missing cell in database document"
-                    })
-                    continue
-                
-                # Check if it's a formula or direct value
-                if is_formula:
-                    # It's a formula - evaluate it
-                    formula = formula_doc.get("formula")
-                    if not formula:
-                        errors.append({
-                            "cell": cell,
-                            "sheet": sheet,
-                            "error": "Formula field is null but is_formula is true"
+            cell = formula_doc.get("cell")
+            if not cell:
+                continue
+            
+            # Extract row number from cell address (e.g., "AQ73" -> 73)
+            import re
+            row_match = re.search(r'\d+', cell)
+            if row_match:
+                row_num = int(row_match.group())
+                if row_num not in rows_dict:
+                    rows_dict[row_num] = []
+                rows_dict[row_num].append(formula_doc)
+        
+        # Sort rows in ascending order
+        sorted_rows = sorted(rows_dict.keys())
+        
+        logger.info(f"Processing sheet '{sheet_name}': {len(sorted_rows)} rows with {len(formulas)} total cells")
+        print(f"📄 Sheet: {sheet_name}")
+        print(f"📊 Total rows to process: {len(sorted_rows)}")
+        print(f"📊 Total cells to process: {len(formulas)}")
+        
+        # Process each row one by one
+        overall_summary = {
+            "total_rows_processed": 0,
+            "total_cells_processed": 0,
+            "successful_cells": 0,
+            "failed_cells": 0,
+            "rows_saved": 0
+        }
+        
+        for row_num in sorted_rows:
+            row_cells = rows_dict[row_num]
+            row_results = []
+            row_errors = []
+            
+            print(f"\n{'='*60}")
+            print(f"🔢 Processing Row {row_num} ({len(row_cells)} cells)")
+            print(f"{'='*60}")
+            logger.info(f"Starting calculation for Row {row_num} with {len(row_cells)} cells")
+            
+            # Calculate each cell in this row
+            for formula_doc in row_cells:
+                try:
+                    cell = formula_doc.get("cell")
+                    sheet = formula_doc.get("sheet")
+                    is_formula = formula_doc.get("is_formula")
+                    
+                    if not cell:
+                        row_errors.append({
+                            "cell": "unknown",
+                            "error": "Missing cell in database document"
                         })
                         continue
                     
-                    value = evaluate_excel_formula(formula, session_id, current_sheet=sheet)
+                    # Check if it's a formula or direct value
+                    if is_formula:
+                        # It's a formula - evaluate it
+                        formula = formula_doc.get("formula")
+                        if not formula:
+                            row_errors.append({
+                                "cell": cell,
+                                "sheet": sheet,
+                                "error": "Formula field is null but is_formula is true"
+                            })
+                            continue
+                        
+                        print(f"  📝 Calculating {sheet}!{cell}: {formula[:50]}...")
+                        value = evaluate_excel_formula(formula, session_id, current_sheet=sheet)
+                        
+                        row_results.append({
+                            "cell": cell,
+                            "sheet": sheet,
+                            "row_number": row_num,
+                            "is_formula": True,
+                            "formula": formula,
+                            "value": value,
+                            "success": value is not None
+                        })
+                        
+                        if value is not None:
+                            print(f"  ✅ {cell} = {value}")
+                            overall_summary["successful_cells"] += 1
+                        else:
+                            print(f"  ❌ {cell} = None (calculation failed)")
+                            overall_summary["failed_cells"] += 1
+                    else:
+                        # It's a direct value - no calculation needed
+                        value = formula_doc.get("value")
+                        
+                        row_results.append({
+                            "cell": cell,
+                            "sheet": sheet,
+                            "row_number": row_num,
+                            "is_formula": False,
+                            "formula": None,
+                            "value": value,
+                            "success": True
+                        })
+                        
+                        print(f"  📌 {cell} = {value} (direct value)")
+                        overall_summary["successful_cells"] += 1
                     
-                    results.append({
-                        "cell": cell,
-                        "sheet": sheet,
-                        "is_formula": True,
-                        "formula": formula,
-                        "value": value,
-                        "success": value is not None
-                    })
-                else:
-                    # It's a direct value - no calculation needed
-                    value = formula_doc.get("value")
+                    overall_summary["total_cells_processed"] += 1
                     
-                    results.append({
-                        "cell": cell,
+                except Exception as calc_error:
+                    row_errors.append({
+                        "cell": cell or "unknown",
                         "sheet": sheet,
-                        "is_formula": False,
-                        "formula": None,
-                        "value": value,
-                        "success": True
+                        "error": str(calc_error)
                     })
-                
-            except Exception as calc_error:
-                errors.append({
-                    "cell": cell or "unknown",
-                    "error": str(calc_error)
-                })
-                logger.error(f"Error calculating cell {cell}: {str(calc_error)}", exc_info=True)
+                    overall_summary["failed_cells"] += 1
+                    logger.error(f"Error calculating cell {cell}: {str(calc_error)}", exc_info=True)
+                    print(f"  ❌ Error in {cell}: {str(calc_error)}")
+            
+            # Save this row's results to MongoDB
+            row_doc = {
+                "calculation_id": calculation_id,
+                "session_id": session_id,
+                "sheet_name": sheet_name,
+                "row_number": row_num,
+                "timestamp": datetime.now(timezone.utc),
+                "cells_in_row": len(row_cells),
+                "successful_calculations": len([r for r in row_results if r["success"]]),
+                "failed_calculations": len(row_errors),
+                "results": row_results,
+                "errors": row_errors
+            }
+            
+            # Insert row results into MongoDB
+            calculated_main_carriageway_collection.insert_one(row_doc)
+            overall_summary["rows_saved"] += 1
+            overall_summary["total_rows_processed"] += 1
+            
+            logger.info(f"Row {row_num} saved to MongoDB. Success: {len([r for r in row_results if r['success']])}, Errors: {len(row_errors)}")
+            print(f"💾 Row {row_num} saved to MongoDB")
+            print(f"  ✅ Successful: {len([r for r in row_results if r['success']])} cells")
+            print(f"  ❌ Failed: {len(row_errors)} cells")
         
-        # Store results in database
-        result_doc = {
-            "calculation_id": calculation_id,
-            "session_id": session_id,
-            "timestamp": datetime.now(timezone.utc),
-            "results": results,
-            "errors": errors,
-            "total_formulas": len(formulas),
-            "successful_calculations": len([r for r in results if r["success"]]),
-            "failed_calculations": len(errors)
-        }
+        # Final summary
+        print(f"\n{'='*60}")
+        print(f"🎉 CALCULATION COMPLETE")
+        print(f"{'='*60}")
+        print(f"Total Rows Processed: {overall_summary['total_rows_processed']}")
+        print(f"Total Cells Processed: {overall_summary['total_cells_processed']}")
+        print(f"Successful Calculations: {overall_summary['successful_cells']}")
+        print(f"Failed Calculations: {overall_summary['failed_cells']}")
+        print(f"Rows Saved to MongoDB: {overall_summary['rows_saved']}")
+        print(f"{'='*60}\n")
         
-        calculated_main_carriageway_collection.insert_one(result_doc)
+        logger.info(f"Calculation completed. Summary: {overall_summary}")
+        
+        # Clear cache for this session after all calculations
+        clear_session_cache(session_id)
+        logger.info(f"Cache cleared for session {session_id}")
         
         response = {
             "calculation_id": calculation_id,
-            "results": results,
-            "errors": errors,
-            "summary": {
-                "total_formulas": len(formulas),
-                "successful_calculations": len([r for r in results if r["success"]]),
-                "failed_calculations": len(errors)
-            }
+            "session_id": session_id,
+            "sheet_name": sheet_name,
+            "message": f"Row-wise calculation completed successfully for sheet '{sheet_name}'",
+            "summary": overall_summary
         }
         
-        return jsonify(response)
+        return jsonify(response), 200
+        
     except Exception as e:
         error_msg = f"Error calculating Main Carriageway values: {str(e)}"
         logger.error(error_msg, exc_info=True)

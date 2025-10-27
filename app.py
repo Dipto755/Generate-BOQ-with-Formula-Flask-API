@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 import openpyxl
 import uuid
 import re
+import redis
+from functools import wraps
 
 load_dotenv()
 
@@ -70,6 +72,28 @@ app.logger = logger
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client[os.getenv("MONGO_DB_NAME")]
+
+# Redis Configuration for caching
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+# REDIS_DB = int(os.getenv("REDIS_DB", 0))
+# REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", None)
+
+# Initialize Redis client
+try:
+    redis_client = redis.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        # db=REDIS_DB,
+        # password=REDIS_PASSWORD,
+        decode_responses=True,  # Automatically decode responses to strings
+        socket_connect_timeout=5
+    )
+    redis_client.ping()  # Test connection
+    logger.info("Successfully connected to Redis")
+except Exception as e:
+    logger.warning(f"Redis connection failed: {e}. Caching will be disabled.")
+    redis_client = None
 
 # Collections for Main Carriageway formulas
 main_carriageway_formulas_collection = db["formulas"]
@@ -211,6 +235,73 @@ def index_to_col_letter(index):
         index, rem = divmod(index - 1, 26)
         letters = chr(rem + ord('A')) + letters
     return letters
+
+
+def get_cache_key(session_id, cell_ref):
+    """Generate Redis cache key for a cell calculation"""
+    return f"calc:{session_id}:{cell_ref}"
+
+
+def get_from_cache(session_id, cell_ref):
+    """Get cached cell value from Redis"""
+    if redis_client is None:
+        return None
+    
+    try:
+        cache_key = get_cache_key(session_id, cell_ref)
+        cached_value = redis_client.get(cache_key)
+        
+        if cached_value is not None:
+            logger.debug(f"Cache HIT for {cell_ref}")
+            print(f"🎯 Cache HIT: {cell_ref}")
+            # Try to convert to appropriate type
+            try:
+                # Try float first
+                return float(cached_value)
+            except ValueError:
+                # Return as string if not a number
+                return cached_value
+        else:
+            logger.debug(f"Cache MISS for {cell_ref}")
+            return None
+    except Exception as e:
+        logger.error(f"Error getting from cache: {e}")
+        return None
+
+
+def set_to_cache(session_id, cell_ref, value, ttl=3600):
+    """Set cell value to Redis cache with TTL (default 1 hour)"""
+    if redis_client is None:
+        return False
+    
+    try:
+        cache_key = get_cache_key(session_id, cell_ref)
+        redis_client.setex(cache_key, ttl, str(value))
+        logger.debug(f"Cache SET for {cell_ref} = {value}")
+        print(f"💾 Cache SET: {cell_ref} = {value}")
+        return True
+    except Exception as e:
+        logger.error(f"Error setting to cache: {e}")
+        return False
+
+
+def clear_session_cache(session_id):
+    """Clear all cached values for a session"""
+    if redis_client is None:
+        return 0
+    
+    try:
+        pattern = f"calc:{session_id}:*"
+        keys = redis_client.keys(pattern)
+        if keys:
+            count = redis_client.delete(*keys)
+            logger.info(f"Cleared {count} cached values for session {session_id}")
+            print(f"🗑️ Cleared {count} cached values")
+            return count
+        return 0
+    except Exception as e:
+        logger.error(f"Error clearing session cache: {e}")
+        return 0
 
 
 def generate_cells_in_range(start_cell, end_cell):
@@ -378,6 +469,15 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
     - Basic arithmetic: +, -, *, /
     """
     try:
+        # Create cache key for this formula
+        formula_cache_key = f"formula:{current_sheet}:{formula}"
+        
+        # Check cache first
+        cached_result = get_from_cache(session_id, formula_cache_key)
+        if cached_result is not None:
+            logger.info(f"Formula cache HIT: {formula}")
+            return cached_result
+        
         logger.info(f"Starting formula evaluation. Formula: {formula}, Session ID: {session_id}, Sheet: {current_sheet}")
         print(f"📝 Processing formula: {formula}")
 
@@ -444,6 +544,8 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                                 result = eval(f"{if_result}{remaining_resolved}", {"__builtins__": {}}, {})
                                 logger.info(f"IF with arithmetic evaluated. Result: {result}")
                                 print(f"✅ IF with arithmetic result: {result}")
+                                # Cache the result
+                                set_to_cache(session_id, formula_cache_key, result)
                                 return result
                             except Exception as e:
                                 logger.error(f"Error in arithmetic after IF: {e}")
@@ -995,6 +1097,11 @@ def resolve_cell_reference(cell_ref, session_id, current_sheet=None):
     if '!' not in cell_ref and current_sheet:
         cell_ref = f"{current_sheet}!{cell_ref}"
     
+    # Check cache first
+    cached_value = get_from_cache(session_id, cell_ref)
+    if cached_value is not None:
+        return cached_value
+    
     try:
         cell_ref = cell_ref.strip()
         
@@ -1032,6 +1139,9 @@ def resolve_cell_reference(cell_ref, session_id, current_sheet=None):
                     print("=====================", collection, file_key)
                     if collection is not None:
                         value = get_cell_value_from_db(session_id, file_key, sheet_name, cell_address, collection)
+                        # Cache the value before returning
+                        if value is not None:
+                            set_to_cache(session_id, cell_ref, value)
                         return value
         else:
             # Same-file reference (Main Carriageway)
@@ -1055,12 +1165,19 @@ def resolve_cell_reference(cell_ref, session_id, current_sheet=None):
                         if formula:
                             logger.debug(f"Cell {cell_address} contains formula: {formula}")
                             print(f"Formula doc found for {current_sheet}!{cell_address}: {formula_doc}")
-                            return evaluate_excel_formula(formula, session_id, current_sheet=sheet_name)
+                            result = evaluate_excel_formula(formula, session_id, current_sheet=sheet_name)
+                            # Cache the calculated value before returning
+                            if result is not None:
+                                set_to_cache(session_id, cell_ref, result)
+                            return result
                     else:
                         # It's a value - return directly
                         value = formula_doc.get("value")
                         logger.debug(f"Cell {cell_address} contains value: {value}")
                         print(f"Value doc found for {current_sheet}!{cell_address}: value={value}")
+                        # Cache the value before returning
+                        if value is not None:
+                            set_to_cache(session_id, cell_ref, value)
                         return value
                 
         return None

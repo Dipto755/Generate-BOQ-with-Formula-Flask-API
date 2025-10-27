@@ -700,11 +700,13 @@ def evaluate_or_function(formula, session_id):
 def evaluate_sum_function(formula, session_id, current_sheet=None):
     """Evaluate Excel SUM function: SUM(range) or SUM(val1, val2, ...)"""
     try:
-        match = re.match(r'SUM\((.*)\)', formula, re.IGNORECASE)
+        match = re.match(r'SUM\(((?:[^()]+|\([^()]*\))*)\)', formula, re.IGNORECASE)
         if not match:
             return None
+
+        content = match.group(1)  # Now group(1) exists!
         
-        content = match.group(1)
+        print("############################################ SUM function content:", content)
         
         # Check if it's a range or individual values
         parts = split_formula_parts(content)
@@ -1156,6 +1158,27 @@ def resolve_all_cell_references(formula, session_id, current_sheet=None):
             result = evaluate_sqrt_function(match.group(0), session_id, current_sheet)
             return str(result) if result is not None else match.group(0)
         resolved = re.sub(r'SQRT\((?:[^()]+|\([^()]*\))*\)', replace_sqrt, resolved, flags=re.IGNORECASE)
+        
+    # Handle IF functions embedded in expressions
+    if 'IF(' in resolved.upper():
+        def replace_if(match):
+            if_formula = match.group(0)
+            print(f"  🔢 Found nested IF function: {if_formula}")
+            result = evaluate_if_function(if_formula, session_id, current_sheet)
+            return str(result) if result is not None else if_formula
+        # Pattern to match IF with nested content
+        resolved = re.sub(r'IF\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\)', replace_if, resolved, flags=re.IGNORECASE)
+        print(f"🔍 After IF replacement: {resolved}")
+
+    # Handle OR functions embedded in expressions  
+    if 'OR(' in resolved.upper():
+        def replace_or(match):
+            or_formula = match.group(0)
+            print(f"  🔢 Found nested OR function: {or_formula}")
+            result = evaluate_or_function(or_formula, session_id, current_sheet)
+            return str(result) if result is not None else or_formula
+        resolved = re.sub(r'OR\((?:[^()]+|\([^()]*\))*\)', replace_or, resolved, flags=re.IGNORECASE)
+        print(f"🔍 After OR replacement: {resolved}")
 
 
     return resolved

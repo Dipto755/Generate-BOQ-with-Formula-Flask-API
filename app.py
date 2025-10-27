@@ -421,7 +421,27 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                         if if_result is not None:
                             # Now do the arithmetic on the result
                             try:
-                                result = eval(f"{if_result}{remaining}", {"__builtins__": {}}, {})
+                                # First, resolve any Excel functions in the remaining part
+                                remaining_resolved = remaining
+                                
+                                # Handle SUM functions
+                                if 'SUM(' in remaining.upper():
+                                    sum_pattern = r'SUM\([^)]+\)'
+                                    def replace_sum(match):
+                                        sum_result = evaluate_sum_function(match.group(0), session_id, current_sheet=current_sheet)
+                                        return str(sum_result) if sum_result is not None else match.group(0)
+                                    remaining_resolved = re.sub(sum_pattern, replace_sum, remaining_resolved, flags=re.IGNORECASE)
+                                
+                                # Handle AVERAGE functions
+                                if 'AVERAGE(' in remaining.upper():
+                                    avg_pattern = r'AVERAGE\([^)]+\)'
+                                    def replace_avg(match):
+                                        avg_result = evaluate_average_function(match.group(0), session_id, current_sheet=current_sheet)
+                                        return str(avg_result) if avg_result is not None else match.group(0)
+                                    remaining_resolved = re.sub(avg_pattern, replace_avg, remaining_resolved, flags=re.IGNORECASE)
+                                
+                                # Now evaluate the complete arithmetic expression
+                                result = eval(f"{if_result}{remaining_resolved}", {"__builtins__": {}}, {})
                                 logger.info(f"IF with arithmetic evaluated. Result: {result}")
                                 print(f"✅ IF with arithmetic result: {result}")
                                 return result
@@ -594,8 +614,11 @@ def evaluate_if_function(formula, session_id, current_sheet=None):
         print(f"True value str --> {true_value_str}")
         print(f"False value str --> {false_value_str}")
         
-        # Resolve condition
-        condition_str = resolve_all_cell_references(condition_str.strip(), session_id, current_sheet=current_sheet)
+        # Resolve condition - but don't resolve cells inside functions
+        condition_str = condition_str.strip()
+        # Only resolve if not containing Excel functions that will handle their own cell resolution
+        if not any(func in condition_str.upper() for func in ['SUM(', 'AVERAGE(', 'LOOKUP(', 'IF(', 'OR(', 'AND(']):
+            condition_str = resolve_all_cell_references(condition_str, session_id, current_sheet=current_sheet)
 
         # Check if condition contains OR function
         if condition_str.upper().startswith('OR('):
@@ -611,31 +634,19 @@ def evaluate_if_function(formula, session_id, current_sheet=None):
         if branch_raw.startswith('(') and branch_raw.endswith(')'):
             branch_raw = branch_raw[1:-1].strip()
         
-        # Check if branch contains IF or other Excel functions with arithmetic operations
-        # Example: IF(...)/1000 or IF(...)+5 or (IF(...)*2)
-        if re.search(r'\b(IF|OR|AND|LOOKUP)\s*\(', branch_raw, re.IGNORECASE):
-            # Check if there are arithmetic operations after the function
-            # This handles cases like: IF(...)/1000
-            if re.search(r'[+\-*/]', branch_raw):
-                print("🔄 Branch contains Excel functions with arithmetic, evaluating through evaluate_excel_formula")
-                return evaluate_excel_formula(branch_raw, session_id, current_sheet=current_sheet)
-            # If branch is just a nested IF without arithmetic
-            elif branch_raw.upper().startswith('IF('):
-                print("🔄 Branch is nested IF, evaluating recursively")
-                return evaluate_if_function(branch_raw, session_id, current_sheet=current_sheet)
-            # Other functions (OR, AND, LOOKUP) without arithmetic
-            else:
-                print("🔄 Branch contains Excel functions, evaluating through evaluate_excel_formula")
-                return evaluate_excel_formula(branch_raw, session_id, current_sheet=current_sheet)
+        # Check if branch contains ANY Excel functions (including SUM and AVERAGE)
+        # These functions need to be evaluated through evaluate_excel_formula
+        if re.search(r'\b(IF|OR|AND|LOOKUP|SUM|AVERAGE|ROUNDUP|SQRT)\s*\(', branch_raw, re.IGNORECASE):
+            print("🔄 Branch contains Excel functions, evaluating through evaluate_excel_formula")
+            return evaluate_excel_formula(branch_raw, session_id, current_sheet=current_sheet)
         
-        # Resolve any cell references inside the branch (with sheet context)
+        # If branch is just a nested IF without arithmetic
+        if branch_raw.upper().startswith('IF('):
+            print("🔄 Branch is nested IF, evaluating recursively")
+            return evaluate_if_function(branch_raw, session_id, current_sheet=current_sheet)
+        
+        # No Excel functions detected - safe to resolve cell references
         branch_expr = resolve_all_cell_references(branch_raw, session_id, current_sheet=current_sheet).strip()
-        
-        # After resolving cell references, check again if there are still Excel functions
-        # (this handles cases where functions are constructed after resolution)
-        if re.search(r'\b(IF|OR|AND|LOOKUP)\s*\(', branch_expr, re.IGNORECASE):
-            print("🔄 Resolved branch still contains Excel functions, evaluating recursively")
-            return evaluate_excel_formula(branch_expr, session_id, current_sheet=current_sheet)
         
         # If branch contains arithmetic or parentheses, try safe_eval
         if re.search(r'[+\-*/()]', branch_expr):

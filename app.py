@@ -620,6 +620,16 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                 logger.info(f"ROUNDUP function result: {result}")
                 print(f"✅ ROUNDUP result: {result}")
             return result
+        
+        # Handle ROUND function
+        if formula.upper().startswith('ROUND('):
+            logger.info("Detected ROUND function")
+            print("🔄 Processing ROUND function...")
+            result = evaluate_round_function(formula, session_id, current_sheet=current_sheet)
+            if result is not None:
+                logger.info(f"ROUND function result: {result}")
+                print(f"✅ ROUND result: {result}")
+            return result
 
         # Handle SQRT function
         if formula.upper().startswith('SQRT('):
@@ -976,6 +986,47 @@ def evaluate_sqrt_function(formula, session_id, current_sheet=None):
         
     except Exception as e:
         logger.error(f"Error evaluating SQRT function: {e}")
+        return None
+    
+
+def evaluate_round_function(formula, session_id, current_sheet=None):
+    """Evaluate Excel ROUND function: ROUND(number, num_digits)"""
+    try:
+        match = re.match(r'ROUND\((.*)\)', formula, re.IGNORECASE)
+        if not match:
+            return None
+        
+        content = match.group(1)
+        parts = split_formula_parts(content)
+        
+        print(f"^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ROUND function got {len(parts)}  <<<<----- parts:", parts)
+        
+        if len(parts) != 2:
+            return None
+        
+        number_str, digits_str = parts
+        
+        # Resolve and evaluate the number part (might contain nested formulas)
+        number_resolved = resolve_all_cell_references(number_str.strip(), session_id, current_sheet)
+        
+        # Check if it contains nested functions
+        if any(func in number_resolved.upper() for func in ['IF(', 'SQRT(', 'SUM(', 'AVERAGE(']):
+            number = evaluate_excel_formula(number_resolved, session_id, current_sheet)
+        else:
+            number = safe_eval(number_resolved)
+        
+        # Resolve digits
+        digits_resolved = resolve_all_cell_references(digits_str.strip(), session_id, current_sheet)
+        digits = safe_eval(digits_resolved)
+        
+        if number is None or digits is None:
+            return None
+        
+        # Use Python's built-in round function
+        return round(float(number), int(digits))
+        
+    except Exception as e:
+        logger.error(f"Error evaluating ROUND function: {e}")
         return None
     
     
@@ -1342,6 +1393,13 @@ def resolve_all_cell_references(formula, session_id, current_sheet=None):
             result = evaluate_roundup_function(match.group(0), session_id, current_sheet)
             return str(result) if result is not None else match.group(0)
         resolved = re.sub(r'ROUNDUP\((?:[^()]+|\([^()]*\))*\)', replace_roundup, resolved, flags=re.IGNORECASE)
+        
+    # Handle ROUND (with nested parentheses support)
+    if 'ROUND(' in resolved.upper():
+        def replace_round(match):
+            result = evaluate_round_function(match.group(0), session_id, current_sheet)
+            return str(result) if result is not None else match.group(0)
+        resolved = re.sub(r'ROUND\((?:[^()]+|\([^()]*\))*\)', replace_round, resolved, flags=re.IGNORECASE)
 
     # Handle SQRT (with nested parentheses support)
     if 'SQRT(' in resolved.upper():
@@ -2054,7 +2112,7 @@ def get_session(session_id):
     """Get session details"""
     try:
         # Try to find in app sessions first
-        session = app_sessions_collection.find_one({"_id": session_id})
+        session = file_sessions_collection.find_one({"session_id": session_id})
         if not session:
             # If not found, try file sessions
             session = file_sessions_collection.find_one({"_id": session_id})
@@ -2357,11 +2415,8 @@ def save_in_main_carriageway():
             return jsonify({"error": "session_id is required"}), 400
 
         # Get session data
-        # Try to find in app sessions first
-        session = app_sessions_collection.find_one({"_id": session_id})
-        if not session:
-            # If not found, try file sessions
-            session = file_sessions_collection.find_one({"_id": session_id})
+        # Try to find in file sessions
+        session = file_sessions_collection.find_one({"session_id": session_id})
         if not session:
             return jsonify({"error": "Session not found"}), 404
 

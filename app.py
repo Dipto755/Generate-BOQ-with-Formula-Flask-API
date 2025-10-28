@@ -614,6 +614,19 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                 print(f"✅ SQRT result: {result}")
             return result
         
+        # Handle IFERROR function
+        if formula.upper().startswith('IFERROR('):
+            logger.info("Detected IFERROR function")
+            print("🔄 Processing IFERROR function...")
+            result = evaluate_iferror_function(formula, session_id, current_sheet=current_sheet)
+            if result is not None:
+                logger.info(f"IFERROR function result: {result}")
+                print(f"✅ IFERROR result: {result}")
+            else:
+                logger.warning("IFERROR evaluation returned None")
+                print("⚠️ IFERROR evaluation failed")
+            return result
+        
         
         # Handle complex expressions with SUM/AVERAGE and arithmetic
         # Replace SUM(...) and AVERAGE(...) calls with their evaluated results before arithmetic
@@ -738,7 +751,7 @@ def evaluate_if_function(formula, session_id, current_sheet=None):
         
         # Check if branch contains ANY Excel functions (including SUM and AVERAGE)
         # These functions need to be evaluated through evaluate_excel_formula
-        if re.search(r'\b(IF|OR|AND|LOOKUP|SUM|AVERAGE|ROUNDUP|SQRT)\s*\(', branch_raw, re.IGNORECASE):
+        if re.search(r'\b(IF|OR|AND|LOOKUP|SUM|AVERAGE|ROUNDUP|SQRT|IFERROR)\s*\(', branch_raw, re.IGNORECASE):
             print("🔄 Branch contains Excel functions, evaluating through evaluate_excel_formula")
             return evaluate_excel_formula(branch_raw, session_id, current_sheet=current_sheet)
         
@@ -946,6 +959,58 @@ def evaluate_sqrt_function(formula, session_id, current_sheet=None):
         
     except Exception as e:
         logger.error(f"Error evaluating SQRT function: {e}")
+        return None
+    
+    
+def evaluate_iferror_function(formula, session_id, current_sheet=None):
+    """Evaluate Excel IFERROR function: IFERROR(value, value_if_error)"""
+    try:
+        match = re.match(r'IFERROR\((.*)\)', formula, re.IGNORECASE)
+        if not match:
+            return None
+        
+        content = match.group(1)
+        print("############################################ IFERROR function content:", content)
+        
+        # Split into value and value_if_error parts
+        parts = split_formula_parts(content)
+        
+        if len(parts) != 2:
+            logger.error(f"IFERROR requires exactly 2 arguments, got {len(parts)}")
+            return None
+        
+        value_str, value_if_error_str = parts
+        
+        print("---------------- IFERROR parts ----------------")
+        print(f"Value to try: {value_str}")
+        print(f"Value if error: {value_if_error_str}")
+        
+        # Try to evaluate the first argument
+        try:
+            result = evaluate_excel_formula(value_str.strip(), session_id, current_sheet=current_sheet)
+            
+            if result is not None:
+                logger.info(f"IFERROR: Value evaluated successfully = {result}")
+                print(f"✅ IFERROR: Value succeeded = {result}")
+                return result
+            else:
+                # If result is None, treat as error and use fallback
+                logger.info("IFERROR: Value returned None, using fallback")
+                print("⚠️ IFERROR: Value returned None, using fallback")
+                fallback = evaluate_excel_formula(value_if_error_str.strip(), session_id, current_sheet=current_sheet)
+                return fallback
+                
+        except Exception as e:
+            # Error occurred, use value_if_error
+            logger.info(f"IFERROR: Error occurred ({str(e)}), using fallback value")
+            print("⚠️ IFERROR: Error occurred, using fallback")
+            
+            fallback = evaluate_excel_formula(value_if_error_str.strip(), session_id, current_sheet=current_sheet)
+            return fallback
+            
+    except Exception as e:
+        logger.error(f"Error evaluating IFERROR function: {e}")
+        print(f"❌ IFERROR evaluation failed: {e}")
         return None
 
 
@@ -1267,6 +1332,14 @@ def resolve_all_cell_references(formula, session_id, current_sheet=None):
             result = evaluate_sqrt_function(match.group(0), session_id, current_sheet)
             return str(result) if result is not None else match.group(0)
         resolved = re.sub(r'SQRT\((?:[^()]+|\([^()]*\))*\)', replace_sqrt, resolved, flags=re.IGNORECASE)
+        
+    # Handle IFERROR (with nested parentheses support)
+    if 'IFERROR(' in resolved.upper():
+        def replace_iferror(match):
+            result = evaluate_iferror_function(match.group(0), session_id, current_sheet)
+            return str(result) if result is not None else match.group(0)
+        resolved = re.sub(r'IFERROR\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\)', replace_iferror, resolved, flags=re.IGNORECASE)
+        print(f"🔍 After IFERROR replacement: {resolved}")
         
     # Handle IF functions embedded in expressions
     if 'IF(' in resolved.upper():

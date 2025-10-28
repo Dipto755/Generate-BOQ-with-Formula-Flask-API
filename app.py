@@ -1330,6 +1330,83 @@ def safe_eval(expression):
         return None
 
 
+def extract_formulas_from_sheet(ws, workbook_path):
+    """
+    Extract both formulas and normal cell values.
+    Adds fields: formula, value, and is_formula.
+    Replaces short references like [5], [6], [7], [8] with actual workbook names.
+    Handles Array Formulas properly.
+    """
+    workbook_map = {
+        "5": "Pavement Input",
+        "6": "TCS Schedule",
+        "7": "TCS Input",
+        "8": "Emb Height"
+    }
+
+    extracted = {}
+
+    for row in ws.iter_rows():
+        for cell in row:
+            cell_info = {"formula": None, "value": None, "is_formula": False}
+
+            # Check if cell contains a formula
+            if cell.data_type == "f" or (cell.value and str(cell.value).startswith("=")):
+                formula_value = None
+                
+                # Handle Array Formula objects
+                if hasattr(cell.value, 'text'):
+                    # It's an ArrayFormula object, get the text attribute
+                    formula_value = cell.value.text
+                    logger.debug(f"Extracted array formula from {cell.coordinate}: {formula_value}")
+                    print(f"  📋 Array formula in {cell.coordinate}")
+                elif isinstance(cell.value, str):
+                    # It's a regular string formula
+                    formula_value = cell.value
+                else:
+                    # Try to convert to string as fallback
+                    try:
+                        formula_value = str(cell.value)
+                        # Check if it's the object representation (contains "object at")
+                        if "object at" in formula_value:
+                            logger.warning(f"Cell {cell.coordinate} has unhandled formula type: {type(cell.value)}")
+                            print(f"  ⚠️ Warning: Unhandled formula type in {cell.coordinate}")
+                            continue
+                    except Exception as e:
+                        logger.error(f"Error converting formula in {cell.coordinate}: {e}")
+                        continue
+
+                if formula_value:
+                    # Replace short workbook references
+                    for key, workbook_name in workbook_map.items():
+                        pattern = rf"'?\[{key}\]'?('?)([A-Za-z0-9 _-]+)\1'?!"
+
+                        def replace_ref(match):
+                            sheet_name = match.group(2).strip()
+                            return f"'[{workbook_name}.xlsx]{sheet_name}'!"
+
+                        formula_value = re.sub(pattern, replace_ref, formula_value)
+
+                    # Cleanup malformed quotes
+                    formula_value = re.sub(r"'+!'+", "'!", formula_value)
+                    formula_value = re.sub(r"!'+!", "!'", formula_value)
+                    formula_value = re.sub(r"''", "'", formula_value)
+
+                    cell_info["formula"] = formula_value
+                    cell_info["is_formula"] = True
+
+            # If not a formula, store value
+            elif cell.value is not None:
+                cell_info["value"] = cell.value
+                cell_info["is_formula"] = False
+
+            if cell_info["formula"] or cell_info["value"] is not None:
+                extracted[cell.coordinate] = cell_info
+
+    logger.info(f"Extracted {len(extracted)} cells (formulas + values) from '{ws.title}'.")
+    return extracted
+
+
 @app.route("/api/upload-boq-template", methods=["POST"])
 def upload_boq_template():
     """Upload BOQ template and identify the BOQ sheet"""
@@ -1433,7 +1510,7 @@ def upload_boq_template():
 
 @app.route("/api/extract-main-carriageway-formulas", methods=["POST"])
 def extract_main_carriageway_formulas():
-    """Extract formulas from Main Carriageway template and save to MongoDB"""
+    """Extract formulas and values from Main Carriageway template and save to MongoDB"""
     try:
         # Check if main carriageway template exists
         template_path = os.path.join(OUTPUT_FOLDER, "main_carriageway_template.xlsx")
@@ -1442,51 +1519,56 @@ def extract_main_carriageway_formulas():
 
         # Load workbook with formulas
         wb = openpyxl.load_workbook(template_path, data_only=False)
+        logger.info(f"Workbook 'Main Carriageway.xlsx' loaded with sheets: {wb.sheetnames}")
         
-        formula_count = 0
+        total_saved = 0
         processed_sheets = []
         
-        # Extract formulas from all sheets
+        # Extract formulas and values from all sheets
         for sheet_name in wb.sheetnames:
-            sheet_formula_count = 0
             ws = wb[sheet_name]
             
-            for row in ws.iter_rows():
-                for cell in row:
-                    # Check if cell contains a formula
-                    if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
-                        formula_doc = {
-                            "file_name": "Main Carriageway.xlsx",
-                            "sheet": sheet_name,
-                            "cell": cell.coordinate,
-                            "formula": cell.value,
-                            "uploaded_at": datetime.now(timezone.utc)
-                        }
-                        
-                        # Update or insert
-                        main_carriageway_formulas_collection.update_one(
-                            {
-                                "file_name": "Main Carriageway.xlsx",
-                                "sheet": sheet_name,
-                                "cell": cell.coordinate
-                            },
-                            {"$set": formula_doc},
-                            upsert=True
-                        )
-                        formula_count += 1
-                        sheet_formula_count += 1
+            # Use the new extraction function
+            formulas = extract_formulas_from_sheet(ws, template_path)
             
-            processed_sheets.append({
-                "name": sheet_name,
-                "formula_count": sheet_formula_count
-            })
+            # Prepare documents for MongoDB
+            documents = [
+                {
+                    "file_name": "Main Carriageway.xlsx",
+                    "sheet": sheet_name,
+                    "cell": cell,
+                    "formula": data.get("formula"),
+                    "value": data.get("value"),
+                    "is_formula": data.get("is_formula", False),
+                    "uploaded_at": datetime.now(timezone.utc),
+                }
+                for cell, data in formulas.items()
+            ]
 
-        logger.info(f"Extracted {formula_count} formulas from Main Carriageway template")
-        print(f"✅ Formulas extracted: {formula_count}")
+            if documents:
+                # Clear existing data for this sheet before inserting
+                main_carriageway_formulas_collection.delete_many({
+                    "file_name": "Main Carriageway.xlsx",
+                    "sheet": sheet_name
+                })
+                
+                # Insert new data
+                result = main_carriageway_formulas_collection.insert_many(documents)
+                inserted_count = len(result.inserted_ids)
+                total_saved += inserted_count
+                logger.info(f"Inserted {inserted_count} cells (formulas + values) from '{sheet_name}' into MongoDB.")
+                
+                processed_sheets.append({
+                    "name": sheet_name,
+                    "cell_count": inserted_count
+                })
+
+        logger.info(f"Total formulas and values saved to MongoDB: {total_saved}")
+        print(f"✅ Total cells extracted: {total_saved}")
 
         return jsonify({
-            "message": "Formulas extracted successfully",
-            "total_formula_count": formula_count,
+            "message": "Formulas and values extracted successfully",
+            "total_saved": total_saved,
             "sheets": processed_sheets
         }), 200
 

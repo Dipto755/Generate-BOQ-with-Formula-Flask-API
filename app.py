@@ -269,8 +269,8 @@ def get_from_cache(session_id, cell_ref):
         return None
 
 
-def set_to_cache(session_id, cell_ref, value, ttl=3600):
-    """Set cell value to Redis cache with TTL (default 1 hour)"""
+def set_to_cache(session_id, cell_ref, value, ttl=10800):
+    """Set cell value to Redis cache with TTL (default 3 hour)"""
     if redis_client is None:
         return False
     
@@ -302,6 +302,21 @@ def clear_session_cache(session_id):
     except Exception as e:
         logger.error(f"Error clearing session cache: {e}")
         return 0
+    
+
+def flush_redis_cache():
+    """Flush entire Redis database (removes all keys)"""
+    if redis_client is None:
+        return False, "Redis client not available"
+    
+    try:
+        redis_client.flushdb()
+        logger.info("Redis database flushed successfully")
+        print("🗑️ Redis database flushed")
+        return True, "Redis cache flushed successfully"
+    except Exception as e:
+        logger.error(f"Error flushing Redis cache: {e}")
+        return False, str(e)
 
 
 def generate_cells_in_range(start_cell, end_cell):
@@ -540,12 +555,14 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                                         return str(avg_result) if avg_result is not None else match.group(0)
                                     remaining_resolved = re.sub(avg_pattern, replace_avg, remaining_resolved, flags=re.IGNORECASE)
                                 
+                                # Resolve any cell references in the remaining part
+                                remaining_resolved = resolve_all_cell_references(remaining_resolved, session_id, current_sheet=current_sheet)
+                                print(f"🔍 Remaining after cell resolution: {remaining_resolved}")
+                                
                                 # Now evaluate the complete arithmetic expression
                                 result = eval(f"{if_result}{remaining_resolved}", {"__builtins__": {}}, {})
                                 logger.info(f"IF with arithmetic evaluated. Result: {result}")
                                 print(f"✅ IF with arithmetic result: {result}")
-                                # Cache the result
-                                set_to_cache(session_id, formula_cache_key, result)
                                 return result
                             except Exception as e:
                                 logger.error(f"Error in arithmetic after IF: {e}")
@@ -2479,7 +2496,13 @@ def root():
                 "path": "/api/sessions/{session_id}",
                 "method": "GET",
                 "description": "Get details of a specific calculation session"
-            }
+            },
+            {
+                "path": "/api/flush-redis-cache",
+                "method": "POST",
+                # "description": "Flush entire Redis cache database. Requires confirmation: {\"confirm\": true}"
+                "description": "Flush entire Redis cache database."
+            },
         ],
         "documentation": "For more details on request/response formats, please refer to the API documentation"
     }
@@ -2517,6 +2540,47 @@ def health_check():
         "database": db_status,
         "statistics": stats
     }), 200
+
+
+@app.route("/api/flush-redis-cache", methods=["POST"])
+def flush_redis_cache_endpoint():
+    """Flush entire Redis cache database"""
+    try:
+        if redis_client is None:
+            return jsonify({
+                "error": "Redis is not configured or unavailable"
+            }), 503
+        
+        # Optional: Require confirmation in request body
+        # data = request.json or {}
+        # confirmation = data.get("confirm", False)
+        
+        # if not confirmation:
+        #     return jsonify({
+        #         "error": "Confirmation required",
+        #         "message": "Please send {\"confirm\": true} to flush Redis cache"
+        #     }), 400
+        
+        success, message = flush_redis_cache()
+        
+        if success:
+            logger.info("Redis cache flushed via API endpoint")
+            return jsonify({
+                "message": message,
+                "status": "success"
+            }), 200
+        else:
+            return jsonify({
+                "error": message,
+                "status": "failed"
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error in flush-redis-cache endpoint: {str(e)}", exc_info=True)
+        return jsonify({
+            "error": str(e),
+            "status": "failed"
+        }), 500
 
 
 if __name__ == "__main__":

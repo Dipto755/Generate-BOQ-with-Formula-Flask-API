@@ -2473,68 +2473,126 @@ def calculate_main_carriageway_single_cell():
 
 @app.route("/api/save-in-main-carriageway", methods=["POST"])
 def save_in_main_carriageway():
-    """Update the Main Carriageway Excel file with calculated values"""
+    """Update the Main Carriageway Excel file with calculated values from MongoDB for a specific session and sheet."""
     try:
         data = request.json
         session_id = data.get("session_id")
+        sheet_name = data.get("sheet_name") # Get the specific sheet name to save
 
         if not session_id:
             return jsonify({"error": "session_id is required"}), 400
+        if not sheet_name:
+            return jsonify({"error": "sheet_name is required"}), 400
 
-        # Get session data
-        # Try to find in file sessions
+        # Verify file upload session exists
         session = file_sessions_collection.find_one({"session_id": session_id})
         if not session:
             return jsonify({"error": "Session not found"}), 404
 
-        calculated_results = session.get("calculated_results", [])
-        if not calculated_results:
-            return jsonify({"error": "No calculated results found. Run calculations first."}), 400
-
         # Load template from uploads folder
         template_path = os.path.join(UPLOAD_FOLDER, "main_carriageway_template.xlsx")
-
         if not os.path.exists(template_path):
             return jsonify({"error": "Main Carriageway template not found in uploads folder"}), 404
 
         wb = openpyxl.load_workbook(template_path)
-        
-        # Update Abstract sheet with calculated values
-        if "Abstract" not in wb.sheetnames:
-            return jsonify({"error": "Abstract sheet not found in Main Carriageway file"}), 404
-        
-        ws = wb["Abstract"]
+
+        # Check if the specified sheet exists in the workbook
+        if sheet_name not in wb.sheetnames:
+             return jsonify({"error": f"Sheet '{sheet_name}' not found in the Main Carriageway template."}), 404
+
+        ws = wb[sheet_name] # Use the specified sheet name
+
+        # --- NEW: Clear existing cell values from row 7 onwards while preserving formatting ---
+        # Determine the range of cells that might have content from row 7 onwards
+        max_row = ws.max_row
+        max_col = ws.max_column
+
+        # Get the set of all coordinates that are part of merged ranges
+        merged_cell_coords = set()
+        for merged_range in ws.merged_cells.ranges:
+            for row in merged_range:
+                for cell in row:
+                    merged_cell_coords.add(cell.coordinate)
+
+        if max_row > 6 and max_col > 0: # Only clear if there are rows beyond 6
+            # Iterate through cells in the used range starting from row 7
+            for row_num in range(7, max_row + 1):
+                for col_num in range(1, max_col + 1):
+                    cell = ws.cell(row=row_num, column=col_num)
+                    # Check if the cell is part of a merged range
+                    if cell.coordinate not in merged_cell_coords:
+                        # Clear the cell's value if it's not merged
+                        cell.value = None
+                    # else: skip clearing merged cells to avoid the read-only error
+        # -------------------------------------------------------------------
+
+        # Retrieve all calculated rows for the given session_id and sheet_name from MongoDB
+        calculated_rows = list(calculated_main_carriageway_collection.find({
+            "session_id": session_id,
+            "sheet_name": sheet_name # Filter by the specific sheet
+        }).sort("row_number", 1)) # Sort by row number to process sequentially
+
+        if not calculated_rows:
+            # If no calculated data is found, the sheet (from row 7) is cleared and saved as is.
+            # Optionally, you could return an error if data is expected.
+            # For now, proceed to save the cleared sheet.
+            logger.info(f"No calculated data found for session '{session_id}' and sheet '{sheet_name}'. Sheet cleared from row 7.")
+
         updated_count = 0
+        total_cells_from_db = 0
 
-        # For each calculated result, update the corresponding cells in Abstract sheet
-        for idx, result in enumerate(calculated_results):
-            row_num = idx + 2  # Assuming row 1 is headers, data starts at row 2
-            
-            # Update main carriageway value
-            main_carriageway_value = result.get("main_carriageway")
-            if main_carriageway_value is not None:
-                for col_letter in ['D', 'E', 'F', 'G', 'H']:  # Common result columns
-                    cell_address = f"{col_letter}{row_num}"
-                    formula_doc = main_carriageway_formulas_collection.find_one({
-                        "file_name": "Main Carriageway.xlsx",
-                        "sheet": "Abstract",
-                        "cell": cell_address
-                    })
-                    if formula_doc:
-                        ws[cell_address].value = main_carriageway_value
-                        updated_count += 1
-                        break
+        print(f"Saving calculated data for {len(calculated_rows)} rows in sheet '{sheet_name}'.")
 
-        # Save updated template back to original location
+        # --- NEW: Prepare merged range mapping for writing ---
+        # Create a dictionary to map any cell in a merged range to its top-left cell
+        merged_range_top_left_map = {}
+        for merged_range in ws.merged_cells.ranges:
+            top_left_coord = merged_range.coord.split(':')[0] # Get top-left cell address like 'A1'
+            for row in merged_range:
+                for cell in row:
+                    merged_range_top_left_map[cell.coordinate] = top_left_coord
+        # -----------------------------------------------------
+
+        for row_doc in calculated_rows:
+            row_num = row_doc.get("row_number")
+            results = row_doc.get("results", []) # List of cell results for this row
+
+            for cell_result in results:
+                cell_address = cell_result.get("cell") # e.g., "A1", "BY8"
+                calculated_value = cell_result.get("value") # The calculated value
+
+                # Ensure the cell address matches the row number for sanity check (optional)
+                import re
+                cell_row_match = re.search(r'\d+', cell_address)
+                if cell_row_match:
+                    cell_row_num = int(cell_row_match.group())
+                    if cell_row_num != row_num:
+                         print(f"Warning: Cell {cell_address} row number doesn't match document row number {row_num}. Skipping.")
+                         continue # Or handle differently if needed
+
+                # --- NEW: Handle merged cell assignment ---
+                # Determine the actual cell address to write to
+                target_cell_address = merged_range_top_left_map.get(cell_address, cell_address)
+
+                # Write the calculated value (or None/null) to the determined Excel cell
+                # This will be the top-left cell of a merged range if applicable, or the original cell otherwise
+                # OpenPyXL handles None by effectively clearing the cell value.
+                ws[target_cell_address].value = calculated_value
+                updated_count += 1
+                total_cells_from_db += 1
+                # ----------------------------------------
+
+        # Save updated template back to original location (overwrite source)
         wb.save(template_path)
-        logger.info(f"Updated main carriageway template in uploads folder: {updated_count} cells updated")
+        logger.info(f"Updated main carriageway template in uploads folder for sheet '{sheet_name}': {updated_count} cells updated from {len(calculated_rows)} rows.")
 
         # Save session-specific copy to outputs folder
-        session_output_filename = f"Main_Carriageway_Updated_{session_id}.xlsx"
+        session_output_filename = f"Main_Carriageway_Updated_{session_id}_{sheet_name}.xlsx"
         session_output_path = os.path.join(OUTPUT_FOLDER, session_output_filename)
         wb.save(session_output_path)
-        
-        print(f"✅ Updated {updated_count} cells in Main Carriageway file")
+        logger.info(f"Saved session-specific updated template for sheet '{sheet_name}' to {session_output_path}")
+
+        print(f"✅ Updated {updated_count} cells in Main Carriageway file sheet '{sheet_name}' from {total_cells_from_db} calculated values in DB.")
         print("✅ Saved updated template and session-specific copy")
 
         return send_file(
@@ -2543,10 +2601,10 @@ def save_in_main_carriageway():
             download_name=session_output_filename,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
-
     except Exception as e:
         print(f"Error saving to Main Carriageway file: {e}")
         traceback.print_exc()
+        logger.error(f"Error in save_in_main_carriageway: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 

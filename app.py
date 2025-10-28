@@ -2235,6 +2235,33 @@ def calculate_main_carriageway():
         
         for row_num in sorted_rows:
             row_cells = rows_dict[row_num]
+            
+            # Check if this row is already calculated in MongoDB
+            existing_result = calculated_main_carriageway_collection.find_one({
+                "session_id": session_id,
+                "row_number": row_num
+            })
+            
+            if existing_result:
+                print(f"\n{'='*60}")
+                print(f"⏭️  Row {row_num} ALREADY CALCULATED - SKIPPING")
+                print(f"{'='*60}")
+                logger.info(f"Row {row_num} already exists in database, skipping calculation")
+                
+                # Update summary with existing row's statistics
+                overall_summary["total_rows_processed"] += 1
+                overall_summary["total_cells_processed"] += existing_result.get("cells_in_row", len(row_cells))
+                overall_summary["successful_cells"] += existing_result.get("successful_calculations", 0)
+                overall_summary["failed_cells"] += existing_result.get("failed_calculations", 0)
+                overall_summary["rows_saved"] += 1
+                
+                print(f"  ℹ️  Using existing calculation from: {existing_result.get('timestamp')}")
+                print(f"  ✅ Successful: {existing_result.get('successful_calculations', 0)} cells")
+                print(f"  ❌ Failed: {existing_result.get('failed_calculations', 0)} cells")
+                
+                # Skip to next row
+                continue
+            
             row_results = []
             row_errors = []
             

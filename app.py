@@ -539,16 +539,16 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                                 # First, resolve any Excel functions in the remaining part
                                 remaining_resolved = remaining
                                 
-                                # Handle SUM functions
-                                if 'SUM(' in remaining.upper():
+                                # Handle SUM functions BEFORE cell resolution
+                                if 'SUM(' in remaining_resolved.upper():
                                     sum_pattern = r'SUM\([^)]+\)'
                                     def replace_sum(match):
                                         sum_result = evaluate_sum_function(match.group(0), session_id, current_sheet=current_sheet)
                                         return str(sum_result) if sum_result is not None else match.group(0)
                                     remaining_resolved = re.sub(sum_pattern, replace_sum, remaining_resolved, flags=re.IGNORECASE)
                                 
-                                # Handle AVERAGE functions
-                                if 'AVERAGE(' in remaining.upper():
+                                # Handle AVERAGE functions BEFORE cell resolution
+                                if 'AVERAGE(' in remaining_resolved.upper():
                                     avg_pattern = r'AVERAGE\([^)]+\)'
                                     def replace_avg(match):
                                         avg_result = evaluate_average_function(match.group(0), session_id, current_sheet=current_sheet)
@@ -558,6 +558,46 @@ def evaluate_excel_formula(formula, session_id, current_sheet=None):
                                 # Resolve any cell references in the remaining part
                                 remaining_resolved = resolve_all_cell_references(remaining_resolved, session_id, current_sheet=current_sheet)
                                 print(f"🔍 Remaining after cell resolution: {remaining_resolved}")
+                                
+                                # Handle nested IF functions AFTER cell resolution
+                                # Use a more robust approach that handles deeply nested parentheses
+                                while 'IF(' in remaining_resolved.upper():
+                                    # Find the start of the IF function
+                                    if_start = remaining_resolved.upper().find('IF(')
+                                    if if_start == -1:
+                                        break
+                                    
+                                    # Find the matching closing parenthesis by counting
+                                    paren_count = 1
+                                    if_end = -1
+                                    for i in range(if_start + 3, len(remaining_resolved)):  # Start after "IF"
+                                        if remaining_resolved[i] == '(':
+                                            paren_count += 1
+                                        elif remaining_resolved[i] == ')':
+                                            paren_count -= 1
+                                            if paren_count == 0:
+                                                if_end = i
+                                                break
+
+                                    
+                                    if if_end == -1:
+                                        logger.error("Could not find matching parenthesis for IF function")
+                                        break
+                                    
+                                    # Extract the IF function
+                                    if_formula = remaining_resolved[if_start:if_end + 1]
+                                    print(f"  🔢 Found nested IF function: {if_formula}")
+                                    
+                                    # Evaluate it
+                                    if_result = evaluate_if_function(if_formula, session_id, current_sheet)
+                                    
+                                    if if_result is not None:
+                                        # Replace the IF function with its result
+                                        remaining_resolved = remaining_resolved[:if_start] + str(if_result) + remaining_resolved[if_end + 1:]
+                                        print(f"🔍 After IF replacement: {remaining_resolved}")
+                                    else:
+                                        logger.warning(f"IF function evaluation returned None: {if_formula}")
+                                        break
                                 
                                 # Now evaluate the complete arithmetic expression
                                 result = eval(f"{if_result}{remaining_resolved}", {"__builtins__": {}}, {})

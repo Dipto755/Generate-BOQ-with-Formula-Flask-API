@@ -14,7 +14,7 @@ import re
 import redis
 from functools import wraps
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock
+from threading import Lock, Semaphore
 
 load_dotenv()
 
@@ -106,6 +106,9 @@ try:
 except Exception as e:
     logger.warning(f"Redis connection failed: {e}. Caching will be disabled.")
     redis_client = None
+    
+# Limit concurrent LOOKUP operations
+lookup_semaphore = Semaphore(3)  # Max 3 LOOKUPs at once
 
 # Collections for Main Carriageway formulas
 main_carriageway_formulas_collection = db["formulas"]
@@ -132,6 +135,85 @@ os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+# Global in-memory cache for input data during calculations
+input_data_cache = {}
+cache_lock = Lock()
+
+def load_input_data_to_memory(session_id):
+    """Load all input data for a session into memory"""
+    try:
+        logger.info(f"Loading input data to memory for session: {session_id}")
+        print(f"🔄 Loading input data to memory for session: {session_id}")
+        
+        # Collections to load
+        collections_to_load = {
+            "TCS Input.xlsx": tcs_input_values_collection,
+            "Pavement Input.xlsx": pavement_input_values_collection, 
+            "Emb Height.xlsx": emb_height_values_collection,
+            "TCS Schedule.xlsx": tcs_schedule_values_collection
+        }
+        
+        session_cache = {}
+        total_loaded = 0
+        
+        for file_name, collection in collections_to_load.items():
+            # Get all documents for this session and file
+            cursor = collection.find({
+                "session_id": session_id,
+                "file_name": file_name
+            })
+            
+            for doc in cursor:
+                # Create key: {file_name}:{sheet}:{cell}
+                cache_key = f"{file_name}:{doc['sheet']}:{doc['cell']}"
+                session_cache[cache_key] = doc['value']
+                total_loaded += 1
+            
+            logger.info(f"Loaded {total_loaded} cells for {file_name}")
+            print(f"📦 Loaded {total_loaded} cells for {file_name}")
+        
+        # Store in global cache with session_id
+        with cache_lock:
+            input_data_cache[session_id] = session_cache
+        
+        logger.info(f"Total input cells loaded to memory: {total_loaded}")
+        print(f"✅ Total input cells loaded to memory: {total_loaded}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error loading input data to memory: {e}")
+        print(f"❌ Error loading input data to memory: {e}")
+        return False
+
+def get_input_data_from_memory(session_id, file_name, sheet_name, cell_address):
+    """Get input data from in-memory cache"""
+    try:
+        with cache_lock:
+            if session_id not in input_data_cache:
+                return None
+            
+            cache_key = f"{file_name}:{sheet_name}:{cell_address}"
+            return input_data_cache[session_id].get(cache_key)
+            
+    except Exception as e:
+        logger.error(f"Error getting data from memory cache: {e}")
+        return None
+
+def clear_input_data_from_memory(session_id):
+    """Clear input data from memory cache for a session"""
+    try:
+        with cache_lock:
+            if session_id in input_data_cache:
+                del input_data_cache[session_id]
+                logger.info(f"Cleared input data from memory for session: {session_id}")
+                print(f"🗑️ Cleared input data from memory for session: {session_id}")
+                return True
+        return False
+    except Exception as e:
+        logger.error(f"Error clearing input data from memory: {e}")
+        return False
 
 
 def get_collection_for_file(file_key):
@@ -217,7 +299,15 @@ def expand_range(range_str, current_sheet=None):
 
 
 def get_cell_value_from_db(session_id, file_name, sheet_name, cell_address, collection):
-    """Retrieve cell value from MongoDB"""
+    """Retrieve cell value - try in-memory cache first, then fall back to MongoDB"""
+    # First try to get from in-memory cache
+    cached_value = get_input_data_from_memory(session_id, file_name, sheet_name, cell_address)
+    
+    if cached_value is not None:
+        logger.debug(f"Memory cache HIT for input cell: {file_name}:{sheet_name}:{cell_address}")
+        return cached_value
+    
+    # If not in memory cache, fall back to MongoDB
     try:
         cell_doc = collection.find_one({
             "session_id": session_id,
@@ -227,10 +317,12 @@ def get_cell_value_from_db(session_id, file_name, sheet_name, cell_address, coll
         })
         
         if cell_doc:
-            return cell_doc.get("value")
+            value = cell_doc.get("value")
+            logger.debug(f"MongoDB fallback for: {file_name}:{sheet_name}:{cell_address} = {value}")
+            return value
         return 0
     except Exception as e:
-        print(f"Error retrieving cell value: {e}")
+        logger.error(f"Error retrieving cell value from MongoDB: {e}")
         return None
 
 
@@ -381,107 +473,108 @@ def evaluate_lookup_function(formula, session_id, current_sheet=None):
     Supports cross-file ranges and local cell refs for lookup_value (prefixed with current_sheet if needed).
     Performs exact-match lookup returning corresponding result_range value.
     """
-    try:
-        # Extract content inside LOOKUP(...)
-        match = re.match(r'LOOKUP\((.*)\)', formula, re.IGNORECASE)
-        if not match:
-            logger.debug("LOOKUP pattern not matched")
-            return None
-        content = match.group(1)
-        parts = split_formula_parts(content)
-        if len(parts) < 3:
-            logger.debug("LOOKUP requires 3 arguments")
-            return None
-
-        lookup_value_str = parts[0].strip()
-        lookup_range_str = parts[1].strip()
-        result_range_str = parts[2].strip()
-        
-        print(f"LOOKUP args --> lookup value str: {lookup_value_str}, lookup range str: {lookup_range_str}, result range str: {result_range_str}")
-
-        # Resolve lookup value (could be a cell reference or literal)
-        # If it's a simple cell like $D7 or D7 and no sheet provided, prefix with current_sheet
-        if re.match(r'^\$?[A-Z]{1,3}\$?\d+$', lookup_value_str) and '!' not in lookup_value_str:
-            if not current_sheet:
-                logger.debug("No current_sheet provided for relative cell ref in LOOKUP")
+    with lookup_semaphore:
+        try:
+            # Extract content inside LOOKUP(...)
+            match = re.match(r'LOOKUP\((.*)\)', formula, re.IGNORECASE)
+            if not match:
+                logger.debug("LOOKUP pattern not matched")
                 return None
-            lookup_value = resolve_cell_reference(f"{current_sheet}!{lookup_value_str}", session_id)
-            print(f"``````LOOKUP relative cell ref resolved to: {lookup_value}")
-        else:
-            # Use existing resolver to handle quoted strings or cross-file refs
-            lookup_value = (
-                resolve_value(lookup_value_str, session_id)
-                if '!' not in lookup_value_str
-                else resolve_cell_reference(lookup_value_str, session_id)
-            )
+            content = match.group(1)
+            parts = split_formula_parts(content)
+            if len(parts) < 3:
+                logger.debug("LOOKUP requires 3 arguments")
+                return None
 
-        logger.debug(f"LOOKUP value resolved to: {lookup_value}")
-        print("_________________________ Lookup value:", lookup_value)
+            lookup_value_str = parts[0].strip()
+            lookup_range_str = parts[1].strip()
+            result_range_str = parts[2].strip()
+            
+            print(f"LOOKUP args --> lookup value str: {lookup_value_str}, lookup range str: {lookup_range_str}, result range str: {result_range_str}")
 
-        # Helper to parse a range like '[TCS Input.xlsx]Input!$C$3:$C$44' or 'Input!C3:C44'
-        def parse_range_str(range_str):
-            # Cross-file?
-            if range_str.startswith("'[") or range_str.startswith("["):
-                m = re.match(r"'?\[([^\]]+)\]'?(.+)", range_str)
-                if not m:
+            # Resolve lookup value (could be a cell reference or literal)
+            # If it's a simple cell like $D7 or D7 and no sheet provided, prefix with current_sheet
+            if re.match(r'^\$?[A-Z]{1,3}\$?\d+$', lookup_value_str) and '!' not in lookup_value_str:
+                if not current_sheet:
+                    logger.debug("No current_sheet provided for relative cell ref in LOOKUP")
                     return None
-                file_name = m.group(1)
-                rest = m.group(2)
-                if '!' not in rest:
-                    return None
-                sheet_part, cells_part = rest.split('!', 1)
-                sheet_name = sheet_part.strip("'")
+                lookup_value = resolve_cell_reference(f"{current_sheet}!{lookup_value_str}", session_id)
+                print(f"``````LOOKUP relative cell ref resolved to: {lookup_value}")
             else:
-                # local sheet included?
-                if '!' in range_str:
-                    sheet_part, cells_part = range_str.split('!', 1)
+                # Use existing resolver to handle quoted strings or cross-file refs
+                lookup_value = (
+                    resolve_value(lookup_value_str, session_id)
+                    if '!' not in lookup_value_str
+                    else resolve_cell_reference(lookup_value_str, session_id)
+                )
+
+            logger.debug(f"LOOKUP value resolved to: {lookup_value}")
+            print("_________________________ Lookup value:", lookup_value)
+
+            # Helper to parse a range like '[TCS Input.xlsx]Input!$C$3:$C$44' or 'Input!C3:C44'
+            def parse_range_str(range_str):
+                # Cross-file?
+                if range_str.startswith("'[") or range_str.startswith("["):
+                    m = re.match(r"'?\[([^\]]+)\]'?(.+)", range_str)
+                    if not m:
+                        return None
+                    file_name = m.group(1)
+                    rest = m.group(2)
+                    if '!' not in rest:
+                        return None
+                    sheet_part, cells_part = rest.split('!', 1)
                     sheet_name = sheet_part.strip("'")
-                    file_name = None
                 else:
-                    # No sheet/file — not supported for ranges
+                    # local sheet included?
+                    if '!' in range_str:
+                        sheet_part, cells_part = range_str.split('!', 1)
+                        sheet_name = sheet_part.strip("'")
+                        file_name = None
+                    else:
+                        # No sheet/file — not supported for ranges
+                        return None
+                cells_part = cells_part.replace('$', '')
+                if ':' not in cells_part:
                     return None
-            cells_part = cells_part.replace('$', '')
-            if ':' not in cells_part:
+                start_cell, end_cell = cells_part.split(':', 1)
+                return file_name, sheet_name, start_cell.strip(), end_cell.strip()
+
+            lookup_parsed = parse_range_str(lookup_range_str)
+            result_parsed = parse_range_str(result_range_str)
+            if not lookup_parsed or not result_parsed:
+                logger.debug("Failed to parse LOOKUP ranges")
                 return None
-            start_cell, end_cell = cells_part.split(':', 1)
-            return file_name, sheet_name, start_cell.strip(), end_cell.strip()
 
-        lookup_parsed = parse_range_str(lookup_range_str)
-        result_parsed = parse_range_str(result_range_str)
-        if not lookup_parsed or not result_parsed:
-            logger.debug("Failed to parse LOOKUP ranges")
+            lookup_file, lookup_sheet, lookup_start, lookup_end = lookup_parsed
+            result_file, result_sheet, result_start, result_end = result_parsed
+
+            # If ranges come from files, use DB; otherwise fail
+            if lookup_file:
+                lookup_values = get_range_values_from_db(session_id, lookup_file, lookup_sheet, lookup_start, lookup_end)
+            else:
+                logger.debug("Local range lookups not implemented")
+                lookup_values = []
+
+            if result_file:
+                result_values = get_range_values_from_db(session_id, result_file, result_sheet, result_start, result_end)
+            else:
+                logger.debug("Local result ranges not implemented")
+                result_values = []
+
+            # Perform exact match lookup
+            for idx, lv in enumerate(lookup_values):
+                if lv == lookup_value:
+                    # Return corresponding result value if exists
+                    if idx < len(result_values):
+                        logger.debug(f"LOOKUP matched at index {idx}: returning {result_values[idx]}")
+                        return result_values[idx]
+                    break
+
+            logger.debug("LOOKUP did not find a match")
             return None
-
-        lookup_file, lookup_sheet, lookup_start, lookup_end = lookup_parsed
-        result_file, result_sheet, result_start, result_end = result_parsed
-
-        # If ranges come from files, use DB; otherwise fail
-        if lookup_file:
-            lookup_values = get_range_values_from_db(session_id, lookup_file, lookup_sheet, lookup_start, lookup_end)
-        else:
-            logger.debug("Local range lookups not implemented")
-            lookup_values = []
-
-        if result_file:
-            result_values = get_range_values_from_db(session_id, result_file, result_sheet, result_start, result_end)
-        else:
-            logger.debug("Local result ranges not implemented")
-            result_values = []
-
-        # Perform exact match lookup
-        for idx, lv in enumerate(lookup_values):
-            if lv == lookup_value:
-                # Return corresponding result value if exists
-                if idx < len(result_values):
-                    logger.debug(f"LOOKUP matched at index {idx}: returning {result_values[idx]}")
-                    return result_values[idx]
-                break
-
-        logger.debug("LOOKUP did not find a match")
-        return None
-    except Exception as e:
-        logger.error(f"Error evaluating LOOKUP: {str(e)}", exc_info=True)
-        return None
+        except Exception as e:
+            logger.error(f"Error evaluating LOOKUP: {str(e)}", exc_info=True)
+            return None
 
 
 def evaluate_excel_formula(formula, session_id, current_sheet=None):
@@ -2433,6 +2526,18 @@ def calculate_main_carriageway():
         if not session:
             return jsonify({"error": f"No file upload session found with ID: {session_id}"}), 404
 
+        # ✅ NEW: Load input data to memory for this session
+        logger.info(f"Loading input data to memory for session: {session_id}")
+        print(f"🔄 Loading input data to memory for session: {session_id}")
+        load_success = load_input_data_to_memory(session_id)
+
+        if load_success:
+            logger.info("Input data loaded successfully to memory")
+            print("✅ Input data loaded successfully to memory")
+        else:
+            logger.warning("Input data load to memory failed, will use MongoDB directly")
+            print("⚠️ Input data load to memory failed, using MongoDB directly")
+
         # Get formulas from database for the specified sheet
         formulas = list(main_carriageway_formulas_collection.find({"sheet": sheet_name}))
         if not formulas:
@@ -2715,7 +2820,7 @@ def save_in_main_carriageway():
     try:
         data = request.json
         session_id = data.get("session_id")
-        sheet_name = data.get("sheet_name") # Get the specific sheet name to save
+        sheet_name = data.get("sheet_name")  # Get the specific sheet name to save
 
         if not session_id:
             return jsonify({"error": "session_id is required"}), 400
@@ -2727,111 +2832,137 @@ def save_in_main_carriageway():
         if not session:
             return jsonify({"error": "Session not found"}), 404
 
-        # Load template from uploads folder
+        # Load template from uploads folder (READ ONLY)
         template_path = os.path.join(UPLOAD_FOLDER, "main_carriageway_template.xlsx")
         if not os.path.exists(template_path):
             return jsonify({"error": "Main Carriageway template not found in uploads folder"}), 404
 
+        print(f"📁 Loading template for session: {session_id}, sheet: {sheet_name}")
         wb = openpyxl.load_workbook(template_path)
 
         # Check if the specified sheet exists in the workbook
         if sheet_name not in wb.sheetnames:
-             return jsonify({"error": f"Sheet '{sheet_name}' not found in the Main Carriageway template."}), 404
+            return jsonify({"error": f"Sheet '{sheet_name}' not found in the Main Carriageway template."}), 404
 
-        ws = wb[sheet_name] # Use the specified sheet name
+        ws = wb[sheet_name]
 
-        # --- NEW: Clear existing cell values from row 7 onwards while preserving formatting ---
-        # Determine the range of cells that might have content from row 7 onwards
-        max_row = ws.max_row
-        max_col = ws.max_column
-
-        # Get the set of all coordinates that are part of merged ranges
+        # OPTIMIZATION: Fast clearing from row 7 onwards
+        print("🧹 Fast clearing cells from row 7 onwards...")
+        
+        # Get all merged cell ranges
+        merged_ranges = list(ws.merged_cells.ranges)
         merged_cell_coords = set()
-        for merged_range in ws.merged_cells.ranges:
+        for merged_range in merged_ranges:
             for row in merged_range:
                 for cell in row:
                     merged_cell_coords.add(cell.coordinate)
 
-        if max_row > 6 and max_col > 0: # Only clear if there are rows beyond 6
-            # Iterate through cells in the used range starting from row 7
-            for row_num in range(7, max_row + 1):
-                for col_num in range(1, max_col + 1):
-                    cell = ws.cell(row=row_num, column=col_num)
-                    # Check if the cell is part of a merged range
-                    if cell.coordinate not in merged_cell_coords:
-                        # Clear the cell's value if it's not merged
-                        cell.value = None
-                    # else: skip clearing merged cells to avoid the read-only error
-        # -------------------------------------------------------------------
+        # OPTIMIZATION: Use batch clearing - only clear non-merged cells
+        max_row = ws.max_row
+        max_col = ws.max_column
+        
+        if max_row > 6 and max_col > 0:
+            cleared_cells = 0
+            # Process in batches to show progress
+            batch_size = 100  # Process 100 rows at a time for progress reporting
+            
+            for start_row in range(7, max_row + 1, batch_size):
+                end_row = min(start_row + batch_size - 1, max_row)
+                print(f"🧹 Clearing rows {start_row}-{end_row}...")
+                
+                for row_num in range(start_row, end_row + 1):
+                    for col_num in range(1, max_col + 1):
+                        cell_coord = f"{openpyxl.utils.get_column_letter(col_num)}{row_num}"
+                        
+                        # Skip merged cells to preserve formatting
+                        if cell_coord not in merged_cell_coords:
+                            cell = ws.cell(row=row_num, column=col_num)
+                            # Only clear if cell has a value (faster than clearing all)
+                            if cell.value is not None:
+                                cell.value = None
+                                cleared_cells += 1
+            
 
         # Retrieve all calculated rows for the given session_id and sheet_name from MongoDB
+        print(f"📊 Retrieving calculated data from MongoDB for {sheet_name}...")
         calculated_rows = list(calculated_main_carriageway_collection.find({
             "session_id": session_id,
-            "sheet_name": sheet_name # Filter by the specific sheet
-        }).sort("row_number", 1)) # Sort by row number to process sequentially
+            "sheet_name": sheet_name
+        }).sort("row_number", 1))
 
         if not calculated_rows:
-            # If no calculated data is found, the sheet (from row 7) is cleared and saved as is.
-            # Optionally, you could return an error if data is expected.
-            # For now, proceed to save the cleared sheet.
-            logger.info(f"No calculated data found for session '{session_id}' and sheet '{sheet_name}'. Sheet cleared from row 7.")
+            logger.info(f"No calculated data found for session '{session_id}' and sheet '{sheet_name}'.")
+            # Save the cleared template to OUTPUT folder only
+            session_output_filename = f"Main_Carriageway_Updated_{session_id}.xlsx"  # Removed sheet_name from filename
+            session_output_path = os.path.join(OUTPUT_FOLDER, session_output_filename)
+            wb.save(session_output_path)
+            print(f"💾 Saved cleared template to: {session_output_path}")
+            return jsonify({
+                "error": "No calculated data found for this session and sheet",
+                "file_path": session_output_filename
+            }), 404
 
-        updated_count = 0
-        total_cells_from_db = 0
+        print(f"📈 Processing {len(calculated_rows)} calculated rows...")
 
-        print(f"Saving calculated data for {len(calculated_rows)} rows in sheet '{sheet_name}'.")
-
-        # --- NEW: Prepare merged range mapping for writing ---
-        # Create a dictionary to map any cell in a merged range to its top-left cell
+        # OPTIMIZATION: Prepare merged range mapping ONCE
         merged_range_top_left_map = {}
-        for merged_range in ws.merged_cells.ranges:
-            top_left_coord = merged_range.coord.split(':')[0] # Get top-left cell address like 'A1'
+        for merged_range in merged_ranges:
+            top_left_coord = merged_range.coord.split(':')[0]
             for row in merged_range:
                 for cell in row:
                     merged_range_top_left_map[cell.coordinate] = top_left_coord
-        # -----------------------------------------------------
 
-        for row_doc in calculated_rows:
-            row_num = row_doc.get("row_number")
-            results = row_doc.get("results", []) # List of cell results for this row
+        # OPTIMIZATION: Batch cell updates with progress tracking
+        updated_cells = 0
+        skipped_cells = 0
+        total_rows = len(calculated_rows)
+        
+        # Process in smaller batches for better progress reporting
+        batch_size = min(50, max(10, total_rows // 10))
+        
+        print(f"🔄 Writing calculated values in batches of {batch_size} rows...")
+        
+        for batch_start in range(0, total_rows, batch_size):
+            batch_end = min(batch_start + batch_size, total_rows)
+            print(f"📝 Processing rows {batch_start + 1}-{batch_end}...")
+            
+            for i in range(batch_start, batch_end):
+                row_doc = calculated_rows[i]
+                row_num = row_doc.get("row_number")
+                results = row_doc.get("results", [])
 
-            for cell_result in results:
-                cell_address = cell_result.get("cell") # e.g., "A1", "BY8"
-                calculated_value = cell_result.get("value") # The calculated value
+                for cell_result in results:
+                    cell_address = cell_result.get("cell")
+                    calculated_value = cell_result.get("value")
 
-                # Ensure the cell address matches the row number for sanity check (optional)
-                import re
-                cell_row_match = re.search(r'\d+', cell_address)
-                if cell_row_match:
-                    cell_row_num = int(cell_row_match.group())
-                    if cell_row_num != row_num:
-                         print(f"Warning: Cell {cell_address} row number doesn't match document row number {row_num}. Skipping.")
-                         continue # Or handle differently if needed
+                    # Skip if no value to write
+                    if calculated_value is None:
+                        skipped_cells += 1
+                        continue
 
-                # --- NEW: Handle merged cell assignment ---
-                # Determine the actual cell address to write to
-                target_cell_address = merged_range_top_left_map.get(cell_address, cell_address)
+                    # Determine the actual cell address to write to (handle merged cells)
+                    target_cell_address = merged_range_top_left_map.get(cell_address, cell_address)
+                    
+                    # Write the calculated value directly
+                    try:
+                        ws[target_cell_address].value = calculated_value
+                        updated_cells += 1
+                    except Exception as cell_error:
+                        print(f"⚠️ Error writing to cell {target_cell_address}: {cell_error}")
+                        skipped_cells += 1
 
-                # Write the calculated value (or None/null) to the determined Excel cell
-                # This will be the top-left cell of a merged range if applicable, or the original cell otherwise
-                # OpenPyXL handles None by effectively clearing the cell value.
-                ws[target_cell_address].value = calculated_value
-                updated_count += 1
-                total_cells_from_db += 1
-                # ----------------------------------------
-
-        # Save updated template back to original location (overwrite source)
-        wb.save(template_path)
-        logger.info(f"Updated main carriageway template in uploads folder for sheet '{sheet_name}': {updated_count} cells updated from {len(calculated_rows)} rows.")
-
-        # Save session-specific copy to outputs folder
-        session_output_filename = f"Main_Carriageway_Updated_{session_id}_{sheet_name}.xlsx"
+        # Save ONLY to OUTPUT folder with session_id (original filename format)
+        session_output_filename = f"Main_Carriageway_Updated_{session_id}.xlsx"  # Original format without sheet_name
         session_output_path = os.path.join(OUTPUT_FOLDER, session_output_filename)
+        
+        print(f"💾 Saving to output folder: {session_output_filename}")
         wb.save(session_output_path)
-        logger.info(f"Saved session-specific updated template for sheet '{sheet_name}' to {session_output_path}")
+        
+        logger.info(f"Saved updated template for sheet '{sheet_name}' to {session_output_path}")
+        logger.info(f"Updated {updated_cells} cells, skipped {skipped_cells} cells")
 
-        print(f"✅ Updated {updated_count} cells in Main Carriageway file sheet '{sheet_name}' from {total_cells_from_db} calculated values in DB.")
-        print("✅ Saved updated template and session-specific copy")
+        print(f"✅ Successfully saved {updated_cells} cells in {total_rows} rows")
+        print(f"✅ File saved to: {session_output_path}")
 
         return send_file(
             session_output_path,
@@ -2839,10 +2970,57 @@ def save_in_main_carriageway():
             download_name=session_output_filename,
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
+        
     except Exception as e:
-        print(f"Error saving to Main Carriageway file: {e}")
+        print(f"❌ Error saving to Main Carriageway file: {e}")
         traceback.print_exc()
         logger.error(f"Error in save_in_main_carriageway: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/redis-stats/<session_id>", methods=["GET"])
+def get_redis_stats(session_id):
+    """Get statistics about Redis cache for a session"""
+    if redis_client is None:
+        return jsonify({"error": "Redis not available"}), 503
+    
+    try:
+        # Count calculated formula keys  
+        calc_pattern = f"calc:{session_id}:*"
+        calc_keys = redis_client.keys(calc_pattern)
+        
+        return jsonify({
+            "session_id": session_id,
+            "calculated_formula_keys": len(calc_keys),
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting Redis stats: {e}")
+        return jsonify({"error": str(e)}), 500
+    
+
+@app.route("/api/memory-cache-stats/<session_id>", methods=["GET"])
+def get_memory_cache_stats(session_id):
+    """Get statistics about memory cache for a session"""
+    try:
+        with cache_lock:
+            if session_id in input_data_cache:
+                session_data = input_data_cache[session_id]
+                return jsonify({
+                    "session_id": session_id,
+                    "cached_cells": len(session_data),
+                    "cache_size_bytes": len(str(session_data).encode('utf-8')),
+                    "file_types": list(set(key.split(':')[0] for key in session_data.keys()))
+                }), 200
+            else:
+                return jsonify({
+                    "session_id": session_id,
+                    "cached_cells": 0,
+                    "message": "No data cached for this session"
+                }), 404
+        
+    except Exception as e:
+        logger.error(f"Error getting memory cache stats: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -2928,6 +3106,22 @@ def root():
                 "path": "/api/sessions/{session_id}",
                 "method": "GET",
                 "description": "Get details of a specific calculation session"
+            },
+            {
+                "path": "/api/memory-cache-stats/<session_id>",
+                "method": "GET", 
+                "description": "Get statistics about memory cache for a session",
+                "parameters": {
+                    "session_id": "Session ID to check memory cache statistics for"
+                }
+            },
+            {
+                "path": "/api/redis-stats/<session_id>",
+                "method": "GET", 
+                "description": "Get statistics about Redis cache for a session",
+                "parameters": {
+                    "session_id": "Session ID to check Redis cache statistics for"
+                }
             },
             {
                 "path": "/api/flush-redis-cache",

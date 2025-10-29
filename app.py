@@ -2322,6 +2322,70 @@ def save_in_boq_template():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/sessions", methods=["GET"])
+def get_all_sessions():
+    """Get all file upload sessions with pagination (lite version)"""
+    try:
+        # Get query parameters
+        page = int(request.args.get('page', 1))
+        limit = int(request.args.get('limit', 50))
+        
+        # Calculate skip for pagination
+        skip = (page - 1) * limit
+        
+        # Get sessions with pagination and sorting (newest first)
+        sessions = list(file_sessions_collection.find(
+            {},
+            {
+                "_id": 1,
+                "session_id": 1,
+                "created_at": 1,
+                "calculated_at": 1,
+                "uploaded_files": 1,
+                "calculated_results": 1
+            }
+        ).sort("created_at", -1).skip(skip).limit(limit))
+        
+        # Convert to JSON-serializable format
+        serialized_sessions = []
+        for session in sessions:
+            # Determine status
+            calculated_results = session.get("calculated_results", [])
+            if not calculated_results:
+                status = "not calculated"
+            elif calculated_results and len(calculated_results) > 0:
+                status = "calculated"
+            else:
+                status = "partially calculated"
+            
+            # Build file summary
+            file_summary = {}
+            uploaded_files = session.get("uploaded_files", {})
+            for file_key, file_info in uploaded_files.items():
+                file_summary[file_key] = {
+                    "filename": file_info.get("filename"),
+                    "sheets": file_info.get("sheets", []),
+                    "cell_count": file_info.get("cell_count", 0)
+                }
+            
+            serialized_session = {
+                "_id": str(session["_id"]),
+                "session_id": session.get("session_id"),
+                "created_at": session.get("created_at").isoformat() if session.get("created_at") else None,
+                "calculated_at": session.get("calculated_at").isoformat() if session.get("calculated_at") else None,
+                "status": status,
+                "file_summary": file_summary
+            }
+            
+            serialized_sessions.append(serialized_session)
+        
+        logger.info(f"Retrieved {len(serialized_sessions)} file sessions")
+        
+        return jsonify(serialized_sessions), 200
+
+    except Exception as e:
+        logger.error(f"Error retrieving sessions: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/sessions/<session_id>", methods=["GET"])
 def get_session(session_id):
@@ -2850,6 +2914,15 @@ def root():
                 "path": "/api/save-in-main-carriageway",
                 "method": "POST",
                 "description": "Save calculated values back to Main Carriageway file"
+            },
+             {
+                "path": "/api/sessions",
+                "method": "GET",
+                "description": "Get all file sessions with pagination",
+                "parameters": {
+                    "page": "Page number (default: 1)",
+                    "limit": "Items per page (default: 50)"
+                }
             },
             {
                 "path": "/api/sessions/{session_id}",

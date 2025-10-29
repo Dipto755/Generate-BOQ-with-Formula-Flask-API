@@ -13,6 +13,8 @@ import uuid
 import re
 import redis
 from functools import wraps
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 
 load_dotenv()
 
@@ -70,7 +72,16 @@ app.logger = logger
 
 # MongoDB Configuration
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-mongo_client = MongoClient(MONGO_URI)
+mongo_client = MongoClient(
+    MONGO_URI,
+    maxPoolSize=500,      # Changed from 100
+    minPoolSize=50,       # Changed from 10
+    maxIdleTimeMS=60000,
+    waitQueueTimeoutMS=10000,
+    serverSelectionTimeoutMS=10000,
+    socketTimeoutMS=45000,
+    connectTimeoutMS=10000
+)
 db = mongo_client[os.getenv("MONGO_DB_NAME")]
 
 # Redis Configuration for caching
@@ -86,6 +97,7 @@ try:
         port=REDIS_PORT,
         # db=REDIS_DB,
         # password=REDIS_PASSWORD,
+        max_connections=100,
         decode_responses=True,  # Automatically decode responses to strings
         socket_connect_timeout=5
     )
@@ -1594,6 +1606,170 @@ def extract_formulas_from_sheet(ws, workbook_path):
     logger.info(f"Extracted {len(extracted)} cells (formulas + values) from '{ws.title}'.")
     return extracted
 
+def get_completed_rows_from_mongodb(session_id, sheet_name):
+    """Query MongoDB for all completed rows for this session+sheet"""
+    try:
+        query = {
+            "session_id": session_id,
+            "sheet_name": sheet_name
+        }
+        
+        completed_docs = list(calculated_main_carriageway_collection.find(query))
+        
+        completed_rows = {
+            doc["row_number"]: doc 
+            for doc in completed_docs
+        }
+        
+        return completed_rows
+    except Exception as e:
+        logger.error(f"Error getting completed rows: {e}")
+        return {}
+
+
+def filter_remaining_rows(all_rows, completed_rows_dict):
+    """Filter out completed rows, return only rows needing calculation"""
+    remaining = []
+    
+    for row_num in all_rows:
+        if row_num not in completed_rows_dict:
+            remaining.append(row_num)
+    
+    return remaining
+
+
+def update_summary_from_existing(completed_rows_dict, overall_summary):
+    """Update counters from already-completed rows"""
+    for row_num, row_doc in sorted(completed_rows_dict.items()):
+        print(f"\n{'='*60}")
+        print(f"⏭️  Row {row_num} ALREADY CALCULATED - SKIPPING")
+        print(f"{'='*60}")
+        logger.info(f"Row {row_num} already exists in database, skipping calculation")
+        
+        overall_summary["total_rows_processed"] += 1
+        overall_summary["total_cells_processed"] += row_doc.get("cells_in_row", 0)
+        overall_summary["successful_cells"] += row_doc.get("successful_calculations", 0)
+        overall_summary["failed_cells"] += row_doc.get("failed_calculations", 0)
+        overall_summary["rows_saved"] += 1
+        
+        print(f"  ℹ️  Using existing calculation from: {row_doc.get('timestamp')}")
+        print(f"  ✅ Successful: {row_doc.get('successful_calculations', 0)} cells")
+        print(f"  ❌ Failed: {row_doc.get('failed_calculations', 0)} cells")
+    
+    return len(completed_rows_dict)
+
+
+def process_single_row(row_num, row_cells, session_id, sheet_name, calculation_id):
+    """Process a single row - pure function for thread pool"""
+    row_results = []
+    row_errors = []
+    
+    print(f"\n{'='*60}")
+    print(f"🔢 Processing Row {row_num} ({len(row_cells)} cells)")
+    print(f"{'='*60}")
+    logger.info(f"Starting calculation for Row {row_num} with {len(row_cells)} cells")
+    
+    for formula_doc in row_cells:
+        try:
+            cell = formula_doc.get("cell")
+            sheet = formula_doc.get("sheet")
+            is_formula = formula_doc.get("is_formula")
+            
+            if not cell:
+                row_errors.append({
+                    "cell": "unknown",
+                    "error": "Missing cell in database document"
+                })
+                continue
+            
+            if is_formula:
+                formula = formula_doc.get("formula")
+                if not formula:
+                    row_errors.append({
+                        "cell": cell,
+                        "sheet": sheet,
+                        "error": "Formula field is null but is_formula is true"
+                    })
+                    continue
+                
+                print(f"  📝 Calculating {sheet}!{cell}: {formula[:50]}...")
+                value = evaluate_excel_formula(formula, session_id, current_sheet=sheet)
+                
+                row_results.append({
+                    "cell": cell,
+                    "sheet": sheet,
+                    "row_number": row_num,
+                    "is_formula": True,
+                    "formula": formula,
+                    "value": value,
+                    "success": value is not None
+                })
+                
+                if value is not None:
+                    print(f"  ✅ {cell} = {value}")
+                else:
+                    print(f"  ❌ {cell} = None (calculation failed)")
+            else:
+                value = formula_doc.get("value")
+                
+                row_results.append({
+                    "cell": cell,
+                    "sheet": sheet,
+                    "row_number": row_num,
+                    "is_formula": False,
+                    "formula": None,
+                    "value": value,
+                    "success": True
+                })
+                
+                print(f"  📌 {cell} = {value} (direct value)")
+                
+        except Exception as calc_error:
+            row_errors.append({
+                "cell": cell or "unknown",
+                "sheet": sheet,
+                "error": str(calc_error)
+            })
+            logger.error(f"Error calculating cell {cell}: {str(calc_error)}", exc_info=True)
+            print(f"  ❌ Error in {cell}: {str(calc_error)}")
+    
+    row_doc = {
+        "calculation_id": calculation_id,
+        "session_id": session_id,
+        "sheet_name": sheet_name,
+        "row_number": row_num,
+        "timestamp": datetime.now(timezone.utc),
+        "cells_in_row": len(row_cells),
+        "successful_calculations": len([r for r in row_results if r["success"]]),
+        "failed_calculations": len(row_errors),
+        "results": row_results,
+        "errors": row_errors
+    }
+    
+    return row_doc
+
+
+def update_progress_in_redis(session_id, completed, total):
+    """Update progress in Redis for tracking"""
+    if redis_client is None:
+        return
+    
+    try:
+        percent = (completed / total * 100) if total > 0 else 0
+        progress_data = {
+            "total_rows": total,
+            "completed_rows": completed,
+            "percent": round(percent, 2)
+        }
+        
+        redis_client.setex(
+            f"progress:{session_id}",
+            3600,  # 1 hour TTL
+            str(progress_data)
+        )
+    except Exception as e:
+        logger.error(f"Error updating progress: {e}")
+
 
 @app.route("/api/upload-boq-template", methods=["POST"])
 def upload_boq_template():
@@ -2174,12 +2350,13 @@ def get_session(session_id):
 
 @app.route("/api/calculate-main-carriageway", methods=["POST"])
 def calculate_main_carriageway():
-    """Calculate values using Main Carriageway formulas - ROW BY ROW"""
+    """Calculate values using Main Carriageway formulas - PARALLEL ROW-BY-ROW with Resume"""
     try:
         data = request.json
         session_id = data.get("session_id")
-        sheet_name = data.get("sheet_name")  # Get sheet name from payload
-        calculation_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")  # Unique ID for this calculation
+        sheet_name = data.get("sheet_name")
+        max_workers = data.get("max_workers", 50)  # Allow customization, default 50
+        calculation_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
         if not session_id:
             return jsonify({"error": "Session ID is required"}), 400
@@ -2207,7 +2384,6 @@ def calculate_main_carriageway():
             if not cell:
                 continue
             
-            # Extract row number from cell address (e.g., "AQ73" -> 73)
             import re
             row_match = re.search(r'\d+', cell)
             if row_match:
@@ -2216,7 +2392,6 @@ def calculate_main_carriageway():
                     rows_dict[row_num] = []
                 rows_dict[row_num].append(formula_doc)
         
-        # Sort rows in ascending order
         sorted_rows = sorted(rows_dict.keys())
         
         logger.info(f"Processing sheet '{sheet_name}': {len(sorted_rows)} rows with {len(formulas)} total cells")
@@ -2224,7 +2399,21 @@ def calculate_main_carriageway():
         print(f"📊 Total rows to process: {len(sorted_rows)}")
         print(f"📊 Total cells to process: {len(formulas)}")
         
-        # Process each row one by one
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 1: PRE-FILTER (Main Thread - Sequential)
+        # ═══════════════════════════════════════════════════════════
+        
+        print(f"\n{'='*60}")
+        print("🔍 PHASE 1: Checking for existing calculations...")
+        print(f"{'='*60}")
+        
+        # Get completed rows from MongoDB
+        completed_rows_dict = get_completed_rows_from_mongodb(session_id, sheet_name)
+        
+        # Filter remaining rows
+        remaining_rows = filter_remaining_rows(sorted_rows, completed_rows_dict)
+        
+        # Initialize summary
         overall_summary = {
             "total_rows_processed": 0,
             "total_cells_processed": 0,
@@ -2233,140 +2422,94 @@ def calculate_main_carriageway():
             "rows_saved": 0
         }
         
-        for row_num in sorted_rows:
-            row_cells = rows_dict[row_num]
+        # Update summary from existing rows
+        initial_progress = update_summary_from_existing(completed_rows_dict, overall_summary)
+        
+        print(f"\n{'='*60}")
+        print("📊 PRE-FILTER SUMMARY")
+        print(f"{'='*60}")
+        print(f"Total rows in sheet: {len(sorted_rows)}")
+        print(f"Already completed: {len(completed_rows_dict)}")
+        print(f"Remaining to process: {len(remaining_rows)}")
+        print(f"{'='*60}\n")
+        
+        # If all rows already completed, return immediately
+        if len(remaining_rows) == 0:
+            print("✅ All rows already calculated!")
             
-            # Check if this row is already calculated in MongoDB
-            existing_result = calculated_main_carriageway_collection.find_one({
-                "session_id": session_id,
-                "row_number": row_num
-            })
+            clear_session_cache(session_id)
             
-            if existing_result:
-                print(f"\n{'='*60}")
-                print(f"⏭️  Row {row_num} ALREADY CALCULATED - SKIPPING")
-                print(f"{'='*60}")
-                logger.info(f"Row {row_num} already exists in database, skipping calculation")
-                
-                # Update summary with existing row's statistics
-                overall_summary["total_rows_processed"] += 1
-                overall_summary["total_cells_processed"] += existing_result.get("cells_in_row", len(row_cells))
-                overall_summary["successful_cells"] += existing_result.get("successful_calculations", 0)
-                overall_summary["failed_cells"] += existing_result.get("failed_calculations", 0)
-                overall_summary["rows_saved"] += 1
-                
-                print(f"  ℹ️  Using existing calculation from: {existing_result.get('timestamp')}")
-                print(f"  ✅ Successful: {existing_result.get('successful_calculations', 0)} cells")
-                print(f"  ❌ Failed: {existing_result.get('failed_calculations', 0)} cells")
-                
-                # Skip to next row
-                continue
-            
-            row_results = []
-            row_errors = []
-            
-            print(f"\n{'='*60}")
-            print(f"🔢 Processing Row {row_num} ({len(row_cells)} cells)")
-            print(f"{'='*60}")
-            logger.info(f"Starting calculation for Row {row_num} with {len(row_cells)} cells")
-            
-            # Calculate each cell in this row
-            for formula_doc in row_cells:
-                try:
-                    cell = formula_doc.get("cell")
-                    sheet = formula_doc.get("sheet")
-                    is_formula = formula_doc.get("is_formula")
-                    
-                    if not cell:
-                        row_errors.append({
-                            "cell": "unknown",
-                            "error": "Missing cell in database document"
-                        })
-                        continue
-                    
-                    # Check if it's a formula or direct value
-                    if is_formula:
-                        # It's a formula - evaluate it
-                        formula = formula_doc.get("formula")
-                        if not formula:
-                            row_errors.append({
-                                "cell": cell,
-                                "sheet": sheet,
-                                "error": "Formula field is null but is_formula is true"
-                            })
-                            continue
-                        
-                        print(f"  📝 Calculating {sheet}!{cell}: {formula[:50]}...")
-                        value = evaluate_excel_formula(formula, session_id, current_sheet=sheet)
-                        
-                        row_results.append({
-                            "cell": cell,
-                            "sheet": sheet,
-                            "row_number": row_num,
-                            "is_formula": True,
-                            "formula": formula,
-                            "value": value,
-                            "success": value is not None
-                        })
-                        
-                        if value is not None:
-                            print(f"  ✅ {cell} = {value}")
-                            overall_summary["successful_cells"] += 1
-                        else:
-                            print(f"  ❌ {cell} = None (calculation failed)")
-                            overall_summary["failed_cells"] += 1
-                    else:
-                        # It's a direct value - no calculation needed
-                        value = formula_doc.get("value")
-                        
-                        row_results.append({
-                            "cell": cell,
-                            "sheet": sheet,
-                            "row_number": row_num,
-                            "is_formula": False,
-                            "formula": None,
-                            "value": value,
-                            "success": True
-                        })
-                        
-                        print(f"  📌 {cell} = {value} (direct value)")
-                        overall_summary["successful_cells"] += 1
-                    
-                    overall_summary["total_cells_processed"] += 1
-                    
-                except Exception as calc_error:
-                    row_errors.append({
-                        "cell": cell or "unknown",
-                        "sheet": sheet,
-                        "error": str(calc_error)
-                    })
-                    overall_summary["failed_cells"] += 1
-                    logger.error(f"Error calculating cell {cell}: {str(calc_error)}", exc_info=True)
-                    print(f"  ❌ Error in {cell}: {str(calc_error)}")
-            
-            # Save this row's results to MongoDB
-            row_doc = {
+            response = {
                 "calculation_id": calculation_id,
                 "session_id": session_id,
                 "sheet_name": sheet_name,
-                "row_number": row_num,
-                "timestamp": datetime.now(timezone.utc),
-                "cells_in_row": len(row_cells),
-                "successful_calculations": len([r for r in row_results if r["success"]]),
-                "failed_calculations": len(row_errors),
-                "results": row_results,
-                "errors": row_errors
+                "message": f"All rows already calculated for sheet '{sheet_name}'",
+                "summary": overall_summary
             }
             
-            # Insert row results into MongoDB
-            calculated_main_carriageway_collection.insert_one(row_doc)
-            overall_summary["rows_saved"] += 1
-            overall_summary["total_rows_processed"] += 1
+            return jsonify(response), 200
+        
+        # ═══════════════════════════════════════════════════════════
+        # PHASE 2: PARALLEL EXECUTION (Thread Pool)
+        # ═══════════════════════════════════════════════════════════
+        
+        print(f"\n{'='*60}")
+        print(f"🚀 PHASE 2: Starting parallel calculation with {max_workers} workers...")
+        print(f"{'='*60}\n")
+        
+        # Thread-safe counter
+        counter_lock = Lock()
+        completed_count = 0
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all remaining rows to thread pool
+            futures = {}
+            for row_num in remaining_rows:
+                future = executor.submit(
+                    process_single_row,
+                    row_num,
+                    rows_dict[row_num],
+                    session_id,
+                    sheet_name,
+                    calculation_id
+                )
+                futures[future] = row_num
             
-            logger.info(f"Row {row_num} saved to MongoDB. Success: {len([r for r in row_results if r['success']])}, Errors: {len(row_errors)}")
-            print(f"💾 Row {row_num} saved to MongoDB")
-            print(f"  ✅ Successful: {len([r for r in row_results if r['success']])} cells")
-            print(f"  ❌ Failed: {len(row_errors)} cells")
+            print(f"📤 Submitted {len(futures)} rows to thread pool\n")
+            
+            # Process results as they complete
+            for future in as_completed(futures):
+                try:
+                    row_doc = future.result()
+                    row_num = futures[future]
+                    
+                    # Save to MongoDB immediately
+                    calculated_main_carriageway_collection.insert_one(row_doc)
+                    
+                    # Update counters (thread-safe)
+                    with counter_lock:
+                        completed_count += 1
+                        overall_summary["total_rows_processed"] += 1
+                        overall_summary["total_cells_processed"] += row_doc["cells_in_row"]
+                        overall_summary["successful_cells"] += row_doc["successful_calculations"]
+                        overall_summary["failed_cells"] += row_doc["failed_calculations"]
+                        overall_summary["rows_saved"] += 1
+                        
+                        total_completed = initial_progress + completed_count
+                        
+                        # Update progress in Redis
+                        update_progress_in_redis(session_id, total_completed, len(sorted_rows))
+                    
+                    logger.info(f"Row {row_num} saved to MongoDB. Success: {row_doc['successful_calculations']}, Errors: {row_doc['failed_calculations']}")
+                    print(f"💾 Row {row_num} saved to MongoDB")
+                    print(f"  ✅ Successful: {row_doc['successful_calculations']} cells")
+                    print(f"  ❌ Failed: {row_doc['failed_calculations']} cells")
+                    print(f"  📊 Progress: {total_completed}/{len(sorted_rows)} ({total_completed/len(sorted_rows)*100:.1f}%)\n")
+                    
+                except Exception as e:
+                    row_num = futures[future]
+                    logger.error(f"Error processing row {row_num}: {e}", exc_info=True)
+                    print(f"❌ Error processing row {row_num}: {e}")
         
         # Final summary
         print(f"\n{'='*60}")
@@ -2389,7 +2532,8 @@ def calculate_main_carriageway():
             "calculation_id": calculation_id,
             "session_id": session_id,
             "sheet_name": sheet_name,
-            "message": f"Row-wise calculation completed successfully for sheet '{sheet_name}'",
+            "message": f"Parallel calculation completed successfully for sheet '{sheet_name}'",
+            "max_workers": max_workers,
             "summary": overall_summary
         }
         
@@ -2400,6 +2544,36 @@ def calculate_main_carriageway():
         logger.error(error_msg, exc_info=True)
         return jsonify({"error": error_msg}), 500
 
+
+@app.route("/api/calculation-progress/<session_id>", methods=["GET"])
+def get_calculation_progress(session_id):
+    """Get real-time calculation progress for a session"""
+    try:
+        if redis_client is None:
+            return jsonify({"error": "Redis not available"}), 503
+        
+        progress_key = f"progress:{session_id}"
+        progress_data = redis_client.get(progress_key)
+        
+        if not progress_data:
+            return jsonify({
+                "session_id": session_id,
+                "status": "not_found",
+                "message": "No progress data found for this session"
+            }), 404
+        
+        import ast
+        progress = ast.literal_eval(progress_data)
+        
+        return jsonify({
+            "session_id": session_id,
+            "status": "in_progress",
+            "progress": progress
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error getting progress: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/calculate-main-carriageway-single-cell", methods=["POST"])
@@ -2661,6 +2835,11 @@ def root():
                 "path": "/api/calculate-main-carriageway",
                 "method": "POST",
                 "description": "Calculate values using Main Carriageway formulas"
+            },
+            {
+                "path": "/api/calculation-progress/{session_id}",
+                "method": "GET",
+                "description": "Get real-time calculation progress for a session"
             },
             {
                 "path": "/api/calculate-main-carriageway-single-cell",

@@ -108,7 +108,7 @@ except Exception as e:
     redis_client = None
     
 # Limit concurrent LOOKUP operations
-lookup_semaphore = Semaphore(3)  # Max 3 LOOKUPs at once
+# lookup_semaphore = Semaphore(6)  # Max 3 LOOKUPs at once
 
 # Collections for Main Carriageway formulas
 main_carriageway_formulas_collection = db["formulas"]
@@ -175,8 +175,8 @@ def load_input_data_to_memory(session_id):
             print(f"📦 Loaded {total_loaded} cells for {file_name}")
         
         # Store in global cache with session_id
-        with cache_lock:
-            input_data_cache[session_id] = session_cache
+        # with cache_lock:
+        input_data_cache[session_id] = session_cache
         
         logger.info(f"Total input cells loaded to memory: {total_loaded}")
         print(f"✅ Total input cells loaded to memory: {total_loaded}")
@@ -190,12 +190,12 @@ def load_input_data_to_memory(session_id):
 def get_input_data_from_memory(session_id, file_name, sheet_name, cell_address):
     """Get input data from in-memory cache"""
     try:
-        with cache_lock:
-            if session_id not in input_data_cache:
-                return None
-            
-            cache_key = f"{file_name}:{sheet_name}:{cell_address}"
-            return input_data_cache[session_id].get(cache_key)
+        # with cache_lock:
+        if session_id not in input_data_cache:
+            return None
+        
+        cache_key = f"{file_name}:{sheet_name}:{cell_address}"
+        return input_data_cache[session_id].get(cache_key)
             
     except Exception as e:
         logger.error(f"Error getting data from memory cache: {e}")
@@ -460,10 +460,48 @@ def get_range_values_from_db(session_id, file_name, sheet_name, start_cell, end_
         logger.debug(f"No collection mapping for file: {file_name}")
         return []
     cells = generate_cells_in_range(start_cell, end_cell)
-    values = []
-    for c in cells:
-        v = get_cell_value_from_db(session_id, file_key, sheet_name, c, collection)
-        values.append(v)
+    
+    # Try memory cache first (BATCH READ - NO LOCK)
+    session_cache = input_data_cache.get(session_id)
+    if session_cache:
+        values = []
+        all_found = True
+        
+        for c in cells:
+            cache_key = f"{file_key}:{sheet_name}:{c}"
+            value = session_cache.get(cache_key)
+            
+            if value is not None:
+                values.append(value)
+            else:
+                # Cache miss - need to fall back to MongoDB
+                all_found = False
+                break
+        
+        # If all cells found in cache, return immediately
+        if all_found:
+            logger.debug(f"Memory cache HIT for range {start_cell}:{end_cell} ({len(values)} cells)")
+            return values
+    
+    # Fallback to MongoDB (BATCH QUERY - not individual queries)
+    logger.debug(f"Memory cache MISS for range, querying MongoDB for {len(cells)} cells")
+    
+    query = {
+        "session_id": session_id,
+        "file_name": file_key,
+        "sheet": sheet_name,
+        "cell": {"$in": cells}  # Single query for ALL cells in range
+    }
+    
+    cursor = collection.find(query)
+    
+    # Build lookup dict from MongoDB results
+    cell_values = {doc['cell']: doc['value'] for doc in cursor}
+    
+    # Return values in correct order (matching cells list order)
+    values = [cell_values.get(c, 0) for c in cells]
+    
+    logger.debug(f"Retrieved {len(values)} values from MongoDB")
     return values
 
 
@@ -473,108 +511,108 @@ def evaluate_lookup_function(formula, session_id, current_sheet=None):
     Supports cross-file ranges and local cell refs for lookup_value (prefixed with current_sheet if needed).
     Performs exact-match lookup returning corresponding result_range value.
     """
-    with lookup_semaphore:
-        try:
-            # Extract content inside LOOKUP(...)
-            match = re.match(r'LOOKUP\((.*)\)', formula, re.IGNORECASE)
-            if not match:
-                logger.debug("LOOKUP pattern not matched")
-                return None
-            content = match.group(1)
-            parts = split_formula_parts(content)
-            if len(parts) < 3:
-                logger.debug("LOOKUP requires 3 arguments")
-                return None
+    # with lookup_semaphore:
+    try:
+        # Extract content inside LOOKUP(...)
+        match = re.match(r'LOOKUP\((.*)\)', formula, re.IGNORECASE)
+        if not match:
+            logger.debug("LOOKUP pattern not matched")
+            return None
+        content = match.group(1)
+        parts = split_formula_parts(content)
+        if len(parts) < 3:
+            logger.debug("LOOKUP requires 3 arguments")
+            return None
 
-            lookup_value_str = parts[0].strip()
-            lookup_range_str = parts[1].strip()
-            result_range_str = parts[2].strip()
-            
-            print(f"LOOKUP args --> lookup value str: {lookup_value_str}, lookup range str: {lookup_range_str}, result range str: {result_range_str}")
+        lookup_value_str = parts[0].strip()
+        lookup_range_str = parts[1].strip()
+        result_range_str = parts[2].strip()
+        
+        print(f"LOOKUP args --> lookup value str: {lookup_value_str}, lookup range str: {lookup_range_str}, result range str: {result_range_str}")
 
-            # Resolve lookup value (could be a cell reference or literal)
-            # If it's a simple cell like $D7 or D7 and no sheet provided, prefix with current_sheet
-            if re.match(r'^\$?[A-Z]{1,3}\$?\d+$', lookup_value_str) and '!' not in lookup_value_str:
-                if not current_sheet:
-                    logger.debug("No current_sheet provided for relative cell ref in LOOKUP")
+        # Resolve lookup value (could be a cell reference or literal)
+        # If it's a simple cell like $D7 or D7 and no sheet provided, prefix with current_sheet
+        if re.match(r'^\$?[A-Z]{1,3}\$?\d+$', lookup_value_str) and '!' not in lookup_value_str:
+            if not current_sheet:
+                logger.debug("No current_sheet provided for relative cell ref in LOOKUP")
+                return None
+            lookup_value = resolve_cell_reference(f"{current_sheet}!{lookup_value_str}", session_id)
+            print(f"``````LOOKUP relative cell ref resolved to: {lookup_value}")
+        else:
+            # Use existing resolver to handle quoted strings or cross-file refs
+            lookup_value = (
+                resolve_value(lookup_value_str, session_id)
+                if '!' not in lookup_value_str
+                else resolve_cell_reference(lookup_value_str, session_id)
+            )
+
+        logger.debug(f"LOOKUP value resolved to: {lookup_value}")
+        print("_________________________ Lookup value:", lookup_value)
+
+        # Helper to parse a range like '[TCS Input.xlsx]Input!$C$3:$C$44' or 'Input!C3:C44'
+        def parse_range_str(range_str):
+            # Cross-file?
+            if range_str.startswith("'[") or range_str.startswith("["):
+                m = re.match(r"'?\[([^\]]+)\]'?(.+)", range_str)
+                if not m:
                     return None
-                lookup_value = resolve_cell_reference(f"{current_sheet}!{lookup_value_str}", session_id)
-                print(f"``````LOOKUP relative cell ref resolved to: {lookup_value}")
+                file_name = m.group(1)
+                rest = m.group(2)
+                if '!' not in rest:
+                    return None
+                sheet_part, cells_part = rest.split('!', 1)
+                sheet_name = sheet_part.strip("'")
             else:
-                # Use existing resolver to handle quoted strings or cross-file refs
-                lookup_value = (
-                    resolve_value(lookup_value_str, session_id)
-                    if '!' not in lookup_value_str
-                    else resolve_cell_reference(lookup_value_str, session_id)
-                )
-
-            logger.debug(f"LOOKUP value resolved to: {lookup_value}")
-            print("_________________________ Lookup value:", lookup_value)
-
-            # Helper to parse a range like '[TCS Input.xlsx]Input!$C$3:$C$44' or 'Input!C3:C44'
-            def parse_range_str(range_str):
-                # Cross-file?
-                if range_str.startswith("'[") or range_str.startswith("["):
-                    m = re.match(r"'?\[([^\]]+)\]'?(.+)", range_str)
-                    if not m:
-                        return None
-                    file_name = m.group(1)
-                    rest = m.group(2)
-                    if '!' not in rest:
-                        return None
-                    sheet_part, cells_part = rest.split('!', 1)
+                # local sheet included?
+                if '!' in range_str:
+                    sheet_part, cells_part = range_str.split('!', 1)
                     sheet_name = sheet_part.strip("'")
+                    file_name = None
                 else:
-                    # local sheet included?
-                    if '!' in range_str:
-                        sheet_part, cells_part = range_str.split('!', 1)
-                        sheet_name = sheet_part.strip("'")
-                        file_name = None
-                    else:
-                        # No sheet/file — not supported for ranges
-                        return None
-                cells_part = cells_part.replace('$', '')
-                if ':' not in cells_part:
+                    # No sheet/file — not supported for ranges
                     return None
-                start_cell, end_cell = cells_part.split(':', 1)
-                return file_name, sheet_name, start_cell.strip(), end_cell.strip()
-
-            lookup_parsed = parse_range_str(lookup_range_str)
-            result_parsed = parse_range_str(result_range_str)
-            if not lookup_parsed or not result_parsed:
-                logger.debug("Failed to parse LOOKUP ranges")
+            cells_part = cells_part.replace('$', '')
+            if ':' not in cells_part:
                 return None
+            start_cell, end_cell = cells_part.split(':', 1)
+            return file_name, sheet_name, start_cell.strip(), end_cell.strip()
 
-            lookup_file, lookup_sheet, lookup_start, lookup_end = lookup_parsed
-            result_file, result_sheet, result_start, result_end = result_parsed
-
-            # If ranges come from files, use DB; otherwise fail
-            if lookup_file:
-                lookup_values = get_range_values_from_db(session_id, lookup_file, lookup_sheet, lookup_start, lookup_end)
-            else:
-                logger.debug("Local range lookups not implemented")
-                lookup_values = []
-
-            if result_file:
-                result_values = get_range_values_from_db(session_id, result_file, result_sheet, result_start, result_end)
-            else:
-                logger.debug("Local result ranges not implemented")
-                result_values = []
-
-            # Perform exact match lookup
-            for idx, lv in enumerate(lookup_values):
-                if lv == lookup_value:
-                    # Return corresponding result value if exists
-                    if idx < len(result_values):
-                        logger.debug(f"LOOKUP matched at index {idx}: returning {result_values[idx]}")
-                        return result_values[idx]
-                    break
-
-            logger.debug("LOOKUP did not find a match")
+        lookup_parsed = parse_range_str(lookup_range_str)
+        result_parsed = parse_range_str(result_range_str)
+        if not lookup_parsed or not result_parsed:
+            logger.debug("Failed to parse LOOKUP ranges")
             return None
-        except Exception as e:
-            logger.error(f"Error evaluating LOOKUP: {str(e)}", exc_info=True)
-            return None
+
+        lookup_file, lookup_sheet, lookup_start, lookup_end = lookup_parsed
+        result_file, result_sheet, result_start, result_end = result_parsed
+
+        # If ranges come from files, use DB; otherwise fail
+        if lookup_file:
+            lookup_values = get_range_values_from_db(session_id, lookup_file, lookup_sheet, lookup_start, lookup_end)
+        else:
+            logger.debug("Local range lookups not implemented")
+            lookup_values = []
+
+        if result_file:
+            result_values = get_range_values_from_db(session_id, result_file, result_sheet, result_start, result_end)
+        else:
+            logger.debug("Local result ranges not implemented")
+            result_values = []
+
+        # Perform exact match lookup
+        for idx, lv in enumerate(lookup_values):
+            if lv == lookup_value:
+                # Return corresponding result value if exists
+                if idx < len(result_values):
+                    logger.debug(f"LOOKUP matched at index {idx}: returning {result_values[idx]}")
+                    return result_values[idx]
+                break
+
+        logger.debug("LOOKUP did not find a match")
+        return None
+    except Exception as e:
+        logger.error(f"Error evaluating LOOKUP: {str(e)}", exc_info=True)
+        return None
 
 
 def evaluate_excel_formula(formula, session_id, current_sheet=None):

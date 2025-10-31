@@ -139,6 +139,7 @@ def allowed_file(filename):
 
 # Global in-memory cache for input data during calculations
 input_data_cache = {}
+main_carriageway_formulas_cache = {}
 cache_lock = Lock()
 
 def load_input_data_to_memory(session_id):
@@ -213,6 +214,69 @@ def clear_input_data_from_memory(session_id):
         return False
     except Exception as e:
         logger.error(f"Error clearing input data from memory: {e}")
+        return False
+    
+def load_main_carriageway_formulas_to_memory(sheet_name=None):
+    """Load Main Carriageway formulas to memory for faster access"""
+    try:
+        logger.info(f"Loading Main Carriageway formulas to memory for sheet: {sheet_name or 'ALL'}")
+        print(f"🔄 Loading Main Carriageway formulas to memory...")
+        
+        # Build query - optionally filter by sheet
+        query = {"file_name": "Main Carriageway.xlsx"}
+        if sheet_name:
+            query["sheet"] = sheet_name
+        
+        # Get all formula documents
+        cursor = main_carriageway_formulas_collection.find(query)
+        
+        formulas_cache = {}
+        total_loaded = 0
+        
+        for doc in cursor:
+            sheet = doc.get('sheet')
+            cell = doc.get('cell')
+            
+            if sheet and cell:
+                # Create key: {sheet}:{cell}
+                cache_key = f"{sheet}:{cell}"
+                
+                # Store the entire document (has formula, value, is_formula fields)
+                formulas_cache[cache_key] = {
+                    'is_formula': doc.get('is_formula', False),
+                    'formula': doc.get('formula'),
+                    'value': doc.get('value')
+                }
+                total_loaded += 1
+        
+        # Store in global cache
+        if sheet_name:
+            # Merge with existing cache if loading specific sheet
+            main_carriageway_formulas_cache.update(formulas_cache)
+        else:
+            # Replace entire cache if loading all
+            main_carriageway_formulas_cache.clear()
+            main_carriageway_formulas_cache.update(formulas_cache)
+        
+        logger.info(f"Total Main Carriageway formulas loaded to memory: {total_loaded}")
+        print(f"✅ Loaded {total_loaded} Main Carriageway formulas to memory")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error loading Main Carriageway formulas to memory: {e}")
+        print(f"❌ Error loading formulas to memory: {e}")
+        return False
+
+
+def clear_main_carriageway_formulas_from_memory():
+    """Clear Main Carriageway formulas from memory cache"""
+    try:
+        main_carriageway_formulas_cache.clear()
+        logger.info("Cleared Main Carriageway formulas from memory")
+        print("🗑️ Cleared Main Carriageway formulas from memory")
+        return True
+    except Exception as e:
+        logger.error(f"Error clearing formulas from memory: {e}")
         return False
 
 
@@ -1466,12 +1530,31 @@ def resolve_cell_reference(cell_ref, session_id, current_sheet=None):
                 sheet_name = parts[0].strip("'")
                 cell_address = parts[1].strip().replace('$', '')
                 
-                # Look up in Main Carriageway formulas collection
-                formula_doc = main_carriageway_formulas_collection.find_one({
-                    "file_name": "Main Carriageway.xlsx",
-                    "sheet": sheet_name,
-                    "cell": cell_address
-                })
+                # Try memory cache first
+                cache_key = f"{sheet_name}:{cell_address}"
+                formula_doc = main_carriageway_formulas_cache.get(cache_key)
+                
+                if formula_doc:
+                    logger.debug(f"Memory cache HIT for Main Carriageway: {sheet_name}!{cell_address}")
+                    print(f"🎯 Formula cache HIT: {sheet_name}!{cell_address}")
+                else:
+                    # Fallback to MongoDB
+                    logger.debug(f"Memory cache MISS, querying MongoDB for: {sheet_name}!{cell_address}")
+                    print(f"📊 Formula cache MISS, querying MongoDB...")
+                    
+                    formula_doc_mongo = main_carriageway_formulas_collection.find_one({
+                        "file_name": "Main Carriageway.xlsx",
+                        "sheet": sheet_name,
+                        "cell": cell_address
+                    })
+                    
+                    if formula_doc_mongo:
+                        # Convert to cache format
+                        formula_doc = {
+                            'is_formula': formula_doc_mongo.get('is_formula', False),
+                            'formula': formula_doc_mongo.get('formula'),
+                            'value': formula_doc_mongo.get('value')
+                        }
 
                 if formula_doc:
                     # Check if it's a formula or a value
@@ -2575,6 +2658,18 @@ def calculate_main_carriageway():
         else:
             logger.warning("Input data load to memory failed, will use MongoDB directly")
             print("⚠️ Input data load to memory failed, using MongoDB directly")
+            
+        # Load Main Carriageway formulas to memory
+        logger.info("Loading Main Carriageway formulas to memory")
+        print("🔄 Loading Main Carriageway formulas to memory...")
+        formula_load_success = load_main_carriageway_formulas_to_memory(sheet_name)
+        
+        if formula_load_success:
+            logger.info("Main Carriageway formulas loaded successfully to memory")
+            print("✅ Main Carriageway formulas loaded to memory")
+        else:
+            logger.warning("Formula load failed, will query MongoDB directly")
+            print("⚠️ Formula load failed, using MongoDB directly")
 
         # Get formulas from database for the specified sheet
         formulas = list(main_carriageway_formulas_collection.find({"sheet": sheet_name}))
@@ -2734,6 +2829,9 @@ def calculate_main_carriageway():
         # Clear cache for this session after all calculations
         clear_session_cache(session_id)
         logger.info(f"Cache cleared for session {session_id}")
+        
+        # Clear Main Carriageway formulas from memory
+        clear_main_carriageway_formulas_from_memory()
         
         response = {
             "calculation_id": calculation_id,

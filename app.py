@@ -1014,7 +1014,9 @@ def evaluate_if_function(formula, session_id, current_sheet=None):
             condition_result = evaluate_or_function(condition_str, session_id)
         else:
             # Evaluate condition
+            print(f"🔍 Evaluating condition: '{condition_str}'")
             condition_result = evaluate_condition(condition_str)
+            print(f"🔍 Condition result: {condition_result}")
         
         # Choose branch
         branch_raw = true_value_str.strip() if condition_result else false_value_str.strip()
@@ -1395,8 +1397,8 @@ def evaluate_condition(condition_str):
         if s.startswith('(') and s.endswith(')'):
             return evaluate_condition(s[1:-1].strip())
 
-        # Handle string equality using single '=' as in Excel
-        if '=' in s and '==' not in s:
+        # Handle string equality using single '=' as in Excel (but not if it's part of >=, <=, !=)
+        if '=' in s and '==' not in s and '>=' not in s and '<=' not in s and '!=' not in s:
             parts = s.split('=', 1)
             if len(parts) == 2:
                 left = parts[0].strip().strip('"').strip("'")
@@ -1413,18 +1415,29 @@ def evaluate_condition(condition_str):
                     try:
                         left = float(left_str)
                         right = float(right_str)
+                        logger.debug(f"Comparing: {left} {op} {right}")
                         if op == '>=':
-                            return left >= right
+                            result = left >= right
+                            logger.debug(f"Result: {result}")
+                            return result
                         if op == '<=':
-                            return left <= right
+                            result = left <= right
+                            logger.debug(f"Result: {result}")
+                            return result
                         if op == '>':
-                            return left > right
+                            result = left > right
+                            logger.debug(f"Result: {result}")
+                            return result
                         if op == '<':
-                            return left < right
+                            result = left < right
+                            logger.debug(f"Result: {result}")
+                            return result
                         if op == '!=':
-                            return left != right
-                    except Exception:
-                        logger.debug(f"Could not convert to float in condition: '{left_str}' or '{right_str}'")
+                            result = left != right
+                            logger.debug(f"Result: {result}")
+                            return result
+                    except Exception as e:
+                        logger.error(f"Could not convert to float in condition: '{left_str}' or '{right_str}' - Error: {e}")
                         return False
 
         # Boolean literals

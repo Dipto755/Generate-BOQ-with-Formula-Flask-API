@@ -96,7 +96,7 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
     """
     Reads main_carriageway.xlsx
     Matches Column A with dict keys starting from Excel row 1
-    Populates columns AQ and AR with embankment heights
+    Populates columns AQ (index 42) and AR (index 43) with embankment heights
     """
     print("\n" + "="*80)
     print("STEP 2: Populating main_carriageway.xlsx")
@@ -107,20 +107,40 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
     print("✓ Read main_carriageway.xlsx:", len(df), "rows")
     print("  Current columns:", len(df.columns))
     
-    # Add new columns AQ and AR for embankment heights
-    df['Emb_Height_Left'] = None
-    df['Emb_Height_Right'] = None
+    # EXPLICIT: Ensure columns AQ and AR are at index 42 and 43
+    # Column AQ = index 42 (43rd column, 0-indexed)
+    # Column AR = index 43 (44th column, 0-indexed)
+    AQ_COL_INDEX = 42
+    AR_COL_INDEX = 43
     
-    print("\n✓ Added columns AQ and AR:")
-    print("  AQ: Emb_Height_Left")
-    print("  AR: Emb_Height_Right")
+    # If dataframe has fewer than 42 columns, we need to add empty columns
+    while len(df.columns) < AQ_COL_INDEX:
+        df['Empty_' + str(len(df.columns))] = None
+    
+    # Now explicitly add/overwrite columns at positions AQ and AR
+    if len(df.columns) == AQ_COL_INDEX:
+        # AQ doesn't exist, add it
+        df.insert(AQ_COL_INDEX, 'Emb_Height_Left', None)
+    elif len(df.columns) > AQ_COL_INDEX:
+        # AQ exists, rename/overwrite it
+        df.iloc[:, AQ_COL_INDEX] = None
+        df.columns.values[AQ_COL_INDEX] = 'Emb_Height_Left'
+    
+    if len(df.columns) == AR_COL_INDEX:
+        # AR doesn't exist, add it
+        df.insert(AR_COL_INDEX, 'Emb_Height_Right', None)
+    elif len(df.columns) > AR_COL_INDEX:
+        # AR exists, rename/overwrite it
+        df.iloc[:, AR_COL_INDEX] = None
+        df.columns.values[AR_COL_INDEX] = 'Emb_Height_Right'
+    
+    print("\n✓ Columns AQ and AR explicitly set:")
+    print("  Column AQ (index 42):", df.columns[AQ_COL_INDEX])
+    print("  Column AR (index 43):", df.columns[AR_COL_INDEX])
+    print("  Total columns:", len(df.columns))
     
     # Start matching from Excel row 1 (pandas index 0)
-    match_start_row = 0
-    
-    print("\n✓ Matching will start from:")
-    print("  Excel row 1 (pandas index", match_start_row, ") - ALL rows")
-    print("  Total rows to process:", len(df))
+    print("\n✓ Matching all rows (starting from index 0)")
     
     # Match and populate
     matched = 0
@@ -130,24 +150,13 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
         # Get the key from Column A
         key = df.iloc[idx, 0]
         
-        # Debug first row
-        if idx == 0:
-            print("\nDEBUG First Row:")
-            print("  Key value:", key)
-            print("  Key type:", type(key))
-            if pd.notna(key):
-                print("  Key as float:", float(key))
-                print("  Key exists in dict?", float(key) in emb_dict)
-            print("  First 5 dict keys:", list(emb_dict.keys())[:5])
-        
         # Try to match in dictionary
-        if pd.notna(key):
-            key_float = round(float(key), 3)  # Round to 3 decimals
-            if key_float in emb_dict:
-                heights = emb_dict[float(key)]
-                df.at[idx, 'Emb_Height_Left'] = heights['left']
-                df.at[idx, 'Emb_Height_Right'] = heights['right']
-                matched += 1
+        if pd.notna(key) and float(key) in emb_dict:
+            heights = emb_dict[float(key)]
+            # EXPLICIT: Write to column index 42 (AQ) and 43 (AR)
+            df.iloc[idx, AQ_COL_INDEX] = heights['left']
+            df.iloc[idx, AR_COL_INDEX] = heights['right']
+            matched += 1
         else:
             unmatched += 1
         
@@ -156,8 +165,8 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
             print("  Processed %d/%d rows..." % (idx + 1, len(df)))
     
     print("\n✓ Matching complete:")
-    print("  Matched (all rows):", matched)
-    print("  Unmatched (all rows):", unmatched)
+    print("  Matched:", matched)
+    print("  Unmatched:", unmatched)
     
     if matched > 0:
         match_pct = matched / (matched + unmatched) * 100

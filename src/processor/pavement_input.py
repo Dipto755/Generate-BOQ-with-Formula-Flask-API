@@ -6,6 +6,10 @@ Populates main_carriageway.xlsx column AX from row 1 onwards
 
 import pandas as pd
 import os
+import sys
+import io
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 
 # ============================================================================
@@ -43,14 +47,14 @@ def create_pavement_dictionary(pavement_input_file):
     # Read the Excel file without headers
     df = pd.read_excel(pavement_input_file, header=None)
     
-    print("✓ Read Pavement_Input.xlsx:", len(df), "total rows")
+    print("[OK] Read Pavement_Input.xlsx:", len(df), "total rows")
     
     # Get suffixes from row 1 (index 0)
     suffix_B = df.iloc[0, 1]  # B1 = "MCW"
     suffix_E = df.iloc[0, 4]  # E1 = "SR"
     
-    print(f"✓ Suffix from B1: '{suffix_B}'")
-    print(f"✓ Suffix from E1: '{suffix_E}'")
+    print(f"[OK] Suffix from B1: '{suffix_B}'")
+    print(f"[OK] Suffix from E1: '{suffix_E}'")
     
     # Create dictionary
     pavement_dict = {}
@@ -58,7 +62,7 @@ def create_pavement_dictionary(pavement_input_file):
     # Process from row 9 onwards (index 8)
     data_start_row = 8
     
-    print(f"\n✓ Processing from Excel row 9 (index {data_start_row})")
+    print(f"\n[OK] Processing from Excel row 9 (index {data_start_row})")
     
     # Process Column B and C
     for i in range(data_start_row, len(df)):
@@ -80,7 +84,7 @@ def create_pavement_dictionary(pavement_input_file):
             key = f"E{excel_row}_{e_value}_{suffix_E}"
             pavement_dict[key] = f_value if pd.notna(f_value) else 0
     
-    print(f"✓ Created dictionary with {len(pavement_dict)} entries")
+    print(f"[OK] Created dictionary with {len(pavement_dict)} entries")
     
     # Show sample entries
     print("\n  Sample entries:")
@@ -106,7 +110,7 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
     
     # Read the main carriageway file
     df = pd.read_excel(main_carriageway_file)
-    print("✓ Read main_carriageway.xlsx:", len(df), "rows")
+    print("[OK] Read main_carriageway.xlsx:", len(df), "rows")
     print("  Current columns:", len(df.columns))
     
     # Column AX = index 49
@@ -124,11 +128,11 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
     
     if ctsb_value is not None:
         ax_value = ctsb_value / 1000
-        print(f"✓ Found CTSB in dictionary: {ctsb_key} = {ctsb_value}")
+        print(f"[OK] Found CTSB in dictionary: {ctsb_key} = {ctsb_value}")
         print(f"  Column AX value will be: {ax_value}")
     else:
         ax_value = 0
-        print("✓ No CTSB found in dictionary")
+        print("[OK] No CTSB found in dictionary")
         print("  Column AX value will be: 0")
         
     # Column BB = F11/1000 (Check E11 keys, as E column has F values)
@@ -137,10 +141,10 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
     for key, value in pavement_dict.items():
         if key.startswith('E11_'):
             bb_value = value / 1000 if pd.notna(value) and value != 0 else 0
-            print(f"✓ Found E11 in dictionary: {key} = {value}, BB value = {bb_value}")
+            print(f"[OK] Found E11 in dictionary: {key} = {value}, BB value = {bb_value}")
             break
     if bb_value == 0:
-        print("✓ No E11 found in dictionary, BB value = 0")
+        print("[OK] No E11 found in dictionary, BB value = 0")
     
     # Column BC = C23/1000 (Check B23 keys, as B column has C values)
     BC_COL_INDEX = 54
@@ -148,10 +152,10 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
     for key, value in pavement_dict.items():
         if key.startswith('B23_'):
             bc_value = value / 1000 if pd.notna(value) and value != 0 else 0
-            print(f"✓ Found B23 in dictionary: {key} = {value}, BC value = {bc_value}")
+            print(f"[OK] Found B23 in dictionary: {key} = {value}, BC value = {bc_value}")
             break
     if bc_value == 0:
-        print("✓ No B23 found in dictionary, BC value = 0")
+        print("[OK] No B23 found in dictionary, BC value = 0")
     
     # Column BD = C24/1000 (Check B24 keys, as B column has C values)
     BD_COL_INDEX = 55
@@ -159,10 +163,10 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
     for key, value in pavement_dict.items():
         if key.startswith('B24_'):
             bd_value = value / 1000 if pd.notna(value) and value != 0 else 0
-            print(f"✓ Found B24 in dictionary: {key} = {value}, BD value = {bd_value}")
+            print(f"[OK] Found B24 in dictionary: {key} = {value}, BD value = {bd_value}")
             break
     if bd_value == 0:
-        print("✓ No B24 found in dictionary, BD value = 0")
+        print("[OK] No B24 found in dictionary, BD value = 0")
     
     # Ensure column AX exists
     if len(df.columns) <= AX_COL_INDEX:
@@ -177,7 +181,7 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
         if df.columns[AX_COL_INDEX] != 'CTSB_Thickness':
             df.columns.values[AX_COL_INDEX] = 'CTSB_Thickness'
     
-    print(f"\n✓ Column AX (index {AX_COL_INDEX}) set to: {ax_value}")
+    print(f"\n[OK] Column AX (index {AX_COL_INDEX}) set to: {ax_value}")
     print(f"  Total columns: {len(df.columns)}")
     
     # Set columns BB, BC, BD
@@ -193,13 +197,13 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
         else:
             df.iloc[:, col_idx] = col_value
             df.columns.values[col_idx] = col_name
-        print(f"✓ Column index {col_idx} ({col_name}) set to: {col_value}")
+        print(f"[OK] Column index {col_idx} ({col_name}) set to: {col_value}")
     
     # Save to Excel
-    print(f"\n✓ Saving to {output_file}...")
+    print(f"\n[OK] Saving to {output_file}...")
     df.to_excel(output_file, index=False, sheet_name='Main Carriageway')
     
-    print("✓ Saved!")
+    print("[OK] Saved!")
     
     return df
 
@@ -228,7 +232,7 @@ def main():
         
         # Success summary
         print("\n" + "="*80)
-        print("SUCCESS! ✓")
+        print("SUCCESS! [OK]")
         print("="*80)
         print("Output file:", OUTPUT_EXCEL)
         print("Total rows:", len(df))
@@ -244,13 +248,13 @@ def main():
             print(f"  Row {idx + 2}: {ax_val}")
         
     except FileNotFoundError as e:
-        print("\n✗ ERROR: File not found")
+        print("\n[ERROR] ERROR: File not found")
         print(" ", e)
         print("\nPlease check:")
         print("  1. Files exist in the data folder")
         print("  2. File names match exactly")
     except Exception as e:
-        print("\n✗ ERROR:", e)
+        print("\n[ERROR] ERROR:", e)
         import traceback
         traceback.print_exc()
 

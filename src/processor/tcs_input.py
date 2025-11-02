@@ -11,6 +11,10 @@ Date: 2025
 import pandas as pd
 import json
 import os
+import sys
+import io
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # ============================================================================
 # FILE PATHS - Update these to match your folder structure
@@ -84,7 +88,7 @@ def create_tcs_dictionary(tcs_input_file):
     range_2_indices = list(range(RANGE_2_START, RANGE_2_END + 1))
     selected_indices = range_1_indices + range_2_indices
     
-    print(f"✓ Extracting columns:")
+    print(f"[OK] Extracting columns:")
     print(f"  Range 1: D to V (indices {RANGE_1_START} to {RANGE_1_END}) = {len(range_1_indices)} columns")
     print(f"  Range 2: AA to AS (indices {RANGE_2_START} to {RANGE_2_END}) = {len(range_2_indices)} columns")
     print(f"  Column W (index {COLUMN_W_INDEX}): {raw_headers[COLUMN_W_INDEX]}")
@@ -134,7 +138,7 @@ def create_tcs_dictionary(tcs_input_file):
     # Get column W header
     column_w_header = raw_headers[COLUMN_W_INDEX] if COLUMN_W_INDEX < len(raw_headers) else None
     
-    print(f"\n✓ Selected column headers:")
+    print(f"\n[OK] Selected column headers:")
     for idx, header in selected_headers[:5]:  # Show first 5
         if header:
             print(f"  {idx_to_excel_col(idx)} (index {idx}): {header}")
@@ -177,8 +181,8 @@ def create_tcs_dictionary(tcs_input_file):
             
             tcs_dict[cs_type] = row_dict
     
-    print(f"\n✓ Created dictionary with {len(tcs_dict)} TCS types")
-    print(f"✓ Each type has {len(selected_headers) + 1} specifications (including column W)")
+    print(f"\n[OK] Created dictionary with {len(tcs_dict)} TCS types")
+    print(f"[OK] Each type has {len(selected_headers) + 1} specifications (including column W)")
     
     return tcs_dict, column_w_header
 
@@ -201,7 +205,7 @@ def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, outp
     
     # Read the main carriageway file
     df = pd.read_excel(main_carriageway_file)
-    print(f"✓ Read main_carriageway.xlsx: {len(df)} rows")
+    print(f"[OK] Read main_carriageway.xlsx: {len(df)} rows")
     print(f"  Existing columns: {len(df.columns)}")
     
     # Create case-insensitive lookup dictionary
@@ -214,9 +218,9 @@ def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, outp
             spec_columns = [k for k in specs.keys() if k != 'COLUMN_W_VALUE']
             break
     
-    print(f"✓ Will add {len(spec_columns)} specification columns from E to AP")
-    print(f"✓ Will add columns AQ-AR as placeholders")
-    print(f"✓ Will add columns AS-AV with '{column_w_name}' values")
+    print(f"[OK] Will add {len(spec_columns)} specification columns from E to AP")
+    print(f"[OK] Will add columns AQ-AR as placeholders")
+    print(f"[OK] Will add columns AS-AV with '{column_w_name}' values")
     
     # Create result dataframe
     result_df = df[['from', 'to', 'length', 'type_of_cross_section']].copy()
@@ -235,7 +239,7 @@ def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, outp
     result_df['AU'] = None
     result_df['AV'] = None
     
-    print(f"✓ Total output columns: {len(result_df.columns)}")
+    print(f"[OK] Total output columns: {len(result_df.columns)}")
     
     # Fill in specifications
     print(f"\nFilling specifications...")
@@ -278,16 +282,16 @@ def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, outp
         if (idx + 1) % 200 == 0:
             print(f"  Processed {idx + 1}/{len(result_df)} rows...")
     
-    print(f"\n✓ Matched specifications for {matched_count}/{len(result_df)} rows")
+    print(f"\n[OK] Matched specifications for {matched_count}/{len(result_df)} rows")
     
     # Show summary
     print(f"\nDictionary lookup statistics:")
     for cs_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
-        status = "✓" if cs_type in tcs_dict or cs_type.lower() in tcs_dict_lower else "✗"
+        status = "[OK]" if cs_type in tcs_dict or cs_type.lower() in tcs_dict_lower else "[ERROR]"
         print(f"  {status} {cs_type}: {count} rows")
     
     if unmatched_types:
-        print(f"\n⚠ WARNING: No specifications found for:")
+        print(f"\n[WARNING] WARNING: No specifications found for:")
         for cs_type in sorted(unmatched_types):
             print(f"    - {cs_type}")
     
@@ -295,15 +299,15 @@ def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, outp
     expected_total = 4 + len(spec_columns) + 2 + 4  # Core + specs + placeholders + W columns
     actual_total = len(result_df.columns)
     
-    print(f"\n✓ Column verification:")
+    print(f"\n[OK] Column verification:")
     print(f"  Expected: {expected_total}, Actual: {actual_total}")
-    print(f"  Match: {'✓ YES' if expected_total == actual_total else '✗ NO'}")
+    print(f"  Match: {'[OK] YES' if expected_total == actual_total else '[ERROR] NO'}")
     
     # Save to Excel
-    print(f"\n✓ Saving to {output_file}...")
+    print(f"\n[OK] Saving to {output_file}...")
     result_df.to_excel(output_file, index=False, sheet_name='Main Carriageway')
     
-    print(f"✓ Saved! Structure:")
+    print(f"[OK] Saved! Structure:")
     print(f"   A-D: 4 core columns")
     print(f"   E-AP: {len(spec_columns)} specification columns")
     print(f"   AQ-AR: 2 placeholder columns")
@@ -331,14 +335,14 @@ def main():
         # Save dictionary as JSON for reference
         with open(OUTPUT_JSON, 'w') as f:
             json.dump(tcs_dict, f, indent=2)
-        print(f"✓ Saved dictionary to: {OUTPUT_JSON}")
+        print(f"[OK] Saved dictionary to: {OUTPUT_JSON}")
         
         # Step 2: Populate main_carriageway.xlsx
         df = populate_specifications(MAIN_CARRIAGEWAY_FILE, tcs_dict, column_w_name, OUTPUT_EXCEL)
         
         # Success summary
         print("\n" + "="*80)
-        print("SUCCESS! ✓")
+        print("SUCCESS! [OK]")
         print("="*80)
         print(f"Output file: {OUTPUT_EXCEL}")
         print(f"Total rows: {len(df)}")
@@ -380,10 +384,10 @@ def main():
                 break
         
     except FileNotFoundError as e:
-        print(f"\n✗ ERROR: File not found - {e}")
+        print(f"\n[ERROR] ERROR: File not found - {e}")
         print("Please check your file paths!")
     except Exception as e:
-        print(f"\n✗ ERROR: {e}")
+        print(f"\n[ERROR] ERROR: {e}")
         import traceback
         traceback.print_exc()
 

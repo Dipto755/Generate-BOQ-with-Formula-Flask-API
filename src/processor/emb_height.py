@@ -6,6 +6,10 @@ Populates main_carriageway.xlsx columns AQ and AR from row 1 onwards
 
 import pandas as pd
 import os
+import sys
+import io
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # ============================================================================
 # FILE PATHS - Update these to match your folder structure
@@ -39,7 +43,7 @@ def create_emb_height_dictionary(emb_height_file):
     # Read the Excel file
     df = pd.read_excel(emb_height_file)
     
-    print("✓ Read Emb_Height.xlsx:", len(df), "total rows")
+    print("[OK] Read Emb_Height.xlsx:", len(df), "total rows")
     
     # Start from Excel row 5 (pandas index 4)
     data_start_row = 3
@@ -47,8 +51,8 @@ def create_emb_height_dictionary(emb_height_file):
     # Extract data from row 5 onwards
     data = df.iloc[data_start_row:]
     
-    print("✓ Extracting data from Excel row 5 (pandas index", data_start_row, ")")
-    print("✓ Total data rows:", len(data))
+    print("[OK] Extracting data from Excel row 5 (pandas index", data_start_row, ")")
+    print("[OK] Total data rows:", len(data))
     
     # Create dictionary with Column A as key
     emb_dict = {}
@@ -73,14 +77,14 @@ def create_emb_height_dictionary(emb_height_file):
         else:
             skipped += 1
     
-    print("✓ Created dictionary with", len(emb_dict), "entries")
+    print("[OK] Created dictionary with", len(emb_dict), "entries")
     if skipped > 0:
         print("  (Skipped", skipped, "rows with NaN keys)")
     
     # Show range
     if emb_dict:
         keys = sorted(emb_dict.keys())
-        print("✓ Key (chainage) range: %.3f to %.3f" % (keys[0], keys[-1]))
+        print("[OK] Key (chainage) range: %.3f to %.3f" % (keys[0], keys[-1]))
         print("\n  Sample entries:")
         for i, key in enumerate(keys[:3]):
             print("    %s: Left=%s, Right=%s" % (key, emb_dict[key]['left'], emb_dict[key]['right']))
@@ -104,7 +108,7 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
     
     # Read the main carriageway file
     df = pd.read_excel(main_carriageway_file)
-    print("✓ Read main_carriageway.xlsx:", len(df), "rows")
+    print("[OK] Read main_carriageway.xlsx:", len(df), "rows")
     print("  Current columns:", len(df.columns))
     
     # EXPLICIT: Ensure columns AQ and AR are at index 42 and 43
@@ -134,13 +138,13 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
         df.iloc[:, AR_COL_INDEX] = None
         df.columns.values[AR_COL_INDEX] = 'Emb_Height_Right'
     
-    print("\n✓ Columns AQ and AR explicitly set:")
+    print("\n[OK] Columns AQ and AR explicitly set:")
     print("  Column AQ (index 42):", df.columns[AQ_COL_INDEX])
     print("  Column AR (index 43):", df.columns[AR_COL_INDEX])
     print("  Total columns:", len(df.columns))
     
     # Start matching from Excel row 1 (pandas index 0)
-    print("\n✓ Matching all rows (starting from index 0)")
+    print("\n[OK] Matching all rows (starting from index 0)")
     
     # Match and populate
     matched = 0
@@ -164,7 +168,7 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
         if (idx + 1) % 200 == 0:
             print("  Processed %d/%d rows..." % (idx + 1, len(df)))
     
-    print("\n✓ Matching complete:")
+    print("\n[OK] Matching complete:")
     print("  Matched:", matched)
     print("  Unmatched:", unmatched)
     
@@ -173,10 +177,10 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
         print("  Match rate: %.1f%%" % match_pct)
     
     # Save to Excel
-    print("\n✓ Saving to", output_file, "...")
+    print("\n[OK] Saving to", output_file, "...")
     df.to_excel(output_file, index=False, sheet_name='Main Carriageway')
     
-    print("✓ Saved! Total columns:", len(df.columns))
+    print("[OK] Saved! Total columns:", len(df.columns))
     
     return df, matched, unmatched
 
@@ -207,7 +211,7 @@ def main():
         
         # Success summary
         print("\n" + "="*80)
-        print("SUCCESS! ✓")
+        print("SUCCESS! [OK]")
         print("="*80)
         print("Output file:", OUTPUT_EXCEL)
         print("Total rows:", len(df))
@@ -233,7 +237,7 @@ def main():
                 print("    Emb_Height_Left (AQ):", row['Emb_Height_Left'])
                 print("    Emb_Height_Right (AR):", row['Emb_Height_Right'])
         else:
-            print("\n⚠ No matching chainages found")
+            print("\n[WARNING] No matching chainages found")
             print("Possible reasons:")
             print("  1. Chainage ranges don't overlap")
             print("  2. Key values don't match exactly")
@@ -248,13 +252,13 @@ def main():
         print("  AR: Emb_Height_Right")
         
     except FileNotFoundError as e:
-        print("\n✗ ERROR: File not found")
+        print("\n[ERROR] ERROR: File not found")
         print(" ", e)
         print("\nPlease check:")
         print("  1. Files exist in the data folder")
         print("  2. File names match exactly")
     except Exception as e:
-        print("\n✗ ERROR:", e)
+        print("\n[ERROR] ERROR:", e)
         import traceback
         traceback.print_exc()
 

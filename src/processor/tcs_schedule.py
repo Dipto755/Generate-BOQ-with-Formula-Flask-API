@@ -1,5 +1,9 @@
 import pandas as pd
 import os
+import sys
+import io
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # Get the script's directory and build relative paths
 script_dir = os.path.dirname(os.path.abspath(__file__))

@@ -98,11 +98,10 @@ def create_pavement_dictionary(pavement_input_file):
 # STEP 2: Populate main_carriageway.xlsx Column AX
 # ============================================================================
 
-def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
+def populate_columns(main_carriageway_file, pavement_dict, output_file):
     """
     Reads main_carriageway.xlsx
-    Populates column AX (index 49) based on formula:
-    IF any dict key contains "CTSB", return value/1000, else 0
+    Populates columns based on formula:
     """
     print("\n" + "="*80)
     print("STEP 2: Populating main_carriageway.xlsx Column AX")
@@ -134,6 +133,25 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
         ax_value = 0
         print("[OK] No CTSB found in dictionary")
         print("  Column AX value will be: 0")
+        
+    # Column AZ = index 50
+    AZ_COL_INDEX = 51
+    ctb_value = None
+    ctb_key = None
+    for key, value in pavement_dict.items():
+        if key.startswith('E10_CTB_'):
+            ctb_value = value
+            ctb_key = key
+            break
+    if ctb_value is not None:
+        az_value = ctb_value / 1000
+        print(f"[OK] Found CTB in dictionary: {ctb_key} = {ctb_value}")
+        print(f"  Column AZ value will be: {az_value}")
+    else:
+        az_value = 0
+        print("[OK] No CTB found in dictionary")
+        print("  Column AZ value will be: 0")
+
         
     # Column BB = F11/1000 (Check E11 keys, as E column has F values)
     BB_COL_INDEX = 53
@@ -184,6 +202,22 @@ def populate_column_ax(main_carriageway_file, pavement_dict, output_file):
     print(f"\n[OK] Column AX (index {AX_COL_INDEX}) set to: {ax_value}")
     print(f"  Total columns: {len(df.columns)}")
     
+    # Ensure column AZ exists
+    if len(df.columns) <= AZ_COL_INDEX:
+        # Add empty columns up to AZ
+        while len(df.columns) < AZ_COL_INDEX:
+            df[f'Empty_{len(df.columns)}'] = None
+        # Add column AZ
+        df.insert(AZ_COL_INDEX, 'CTB_Thickness', az_value)
+    else:
+        # Column exists, update it
+        df.iloc[:, AZ_COL_INDEX] = az_value
+        if df.columns[AZ_COL_INDEX] != 'CTB_Thickness':
+            df.columns.values[AZ_COL_INDEX] = 'CTB_Thickness'
+    print(f"[OK] Column AZ (index {AZ_COL_INDEX}) set to: {az_value}")
+    print(f"  Total columns: {len(df.columns)}")
+    
+    
     # Set columns BB, BC, BD
     for col_idx, col_value, col_name in [
         (BB_COL_INDEX, bb_value, 'LHS_AIL_Thickness'),
@@ -228,7 +262,7 @@ def main():
         pavement_dict = create_pavement_dictionary(PAVEMENT_INPUT_FILE)
         
         # Step 2: Populate main_carriageway.xlsx
-        df = populate_column_ax(MAIN_CARRIAGEWAY_FILE, pavement_dict, OUTPUT_EXCEL)
+        df = populate_columns(MAIN_CARRIAGEWAY_FILE, pavement_dict, OUTPUT_EXCEL)
         
         # Success summary
         print("\n" + "="*80)

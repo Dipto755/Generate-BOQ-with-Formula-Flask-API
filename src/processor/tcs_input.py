@@ -25,7 +25,7 @@ MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
 
 # Output files
 OUTPUT_JSON = os.path.join(root_dir, 'data', 'tcs_specifications.json')
-OUTPUT_EXCEL = os.path.join(root_dir, 'data', 'main_carriageway_extended.xlsx')
+OUTPUT_EXCEL = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
 
 
 # ============================================================================

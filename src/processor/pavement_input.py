@@ -316,6 +316,33 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     print(f"\n[OK] Column AX (index {AX_COL_INDEX}) set to: {ax_value}")
     print(f"  Total columns: {len(df.columns)}")
     
+    # Column AY = IF(BD>0, C22/1000, IF(E9="GSB" OR E9="Geogrid Reinforced GSB", F9/1000, 0))
+    AY_COL_INDEX = 50
+    ay_value = 0
+    
+    # First check: If BD (PQC) > 0, then use C22/1000
+    if bd_value > 0:
+        for key, value in pavement_dict.items():
+            if key.startswith('B22_'):
+                ay_value = value / 1000 if pd.notna(value) and value != 0 else 0
+                print(f"[OK] BD > 0, Found B22 in dictionary: {key} = {value}, AY value = {ay_value}")
+                break
+        if ay_value == 0:
+            print("[OK] BD > 0 but no B22 found in dictionary, AY value = 0")
+    else:
+        # Second check: If BD = 0, check E9 for "GSB" or "Geogrid Reinforced GSB"
+        for key, value in pavement_dict.items():
+            if key.startswith('E9_'):
+                parts = key.split('_')
+                if len(parts) >= 2:
+                    layer_name = parts[1]
+                    if layer_name == "GSB" or layer_name == "Geogrid Reinforced GSB":
+                        ay_value = value / 1000 if pd.notna(value) and value != 0 else 0
+                        print(f"[OK] BD = 0, Found E9 '{layer_name}' in dictionary: {key} = {value}, AY value = {ay_value}")
+                        break
+        if ay_value == 0:
+            print("[OK] BD = 0 and no GSB found in E9, AY value = 0")
+    
     # Ensure column AZ exists
     if len(df.columns) <= AZ_COL_INDEX:
         # Add empty columns up to AZ
@@ -334,6 +361,7 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     
     # Set columns BB, BC, BD
     for col_idx, col_value, col_name in [
+        (AY_COL_INDEX, ay_value, 'LHS_GSB_Thickness'),
         (BA_COL_INDEX, ba_value, 'LHS_WMM_Thickness'),
         (BB_COL_INDEX, bb_value, 'LHS_AIL_Thickness'),
         (BC_COL_INDEX, bc_value, 'LHS_DLC_Thickness'),

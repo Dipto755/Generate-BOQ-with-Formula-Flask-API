@@ -358,8 +358,161 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     print(f"[OK] Column AZ (index {AZ_COL_INDEX}) set to: {az_value}")
     print(f"  Total columns: {len(df.columns)}")
     
+    # Column BL = IF B9="CTSB" THEN C9/1000 ELSE 0
+    BL_COL_INDEX = 63
+    bl_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B9_CTSB_'):
+            bl_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B9 CTSB in dictionary: {key} = {value}, BL value = {bl_value}")
+            break
+    if bl_value == 0:
+        print("[OK] No CTSB found in B9, BL value = 0")
     
-    # Set columns BB, BC, BD
+    # Column BN = IF B10="CTB" THEN C10/1000 ELSE 0
+    BN_COL_INDEX = 65
+    bn_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B10_CTB_'):
+            bn_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B10 CTB in dictionary: {key} = {value}, BN value = {bn_value}")
+            break
+    if bn_value == 0:
+        print("[OK] No CTB found in B10, BN value = 0")
+    
+    # Column BO = IF B10="WMM" OR B10="Geogrid Reinforced WMM" THEN C10/1000, ELSE IF B11="WMM" THEN C11/1000 ELSE 0
+    BO_COL_INDEX = 66
+    bo_value = 0
+    bo_found = False
+    
+    # First check B10
+    for key, value in pavement_dict.items():
+        if key.startswith('B10_'):
+            parts = key.split('_')
+            if len(parts) >= 2:
+                layer_name = parts[1]
+                if layer_name == "WMM" or layer_name == "Geogrid Reinforced WMM":
+                    bo_value = value / 1000 if pd.notna(value) and value != 0 else 0
+                    print(f"[OK] Found B10 '{layer_name}' in dictionary: {key} = {value}, BO value = {bo_value}")
+                    bo_found = True
+                    break
+    
+    # If not found in B10, check B11
+    if not bo_found:
+        for key, value in pavement_dict.items():
+            if key.startswith('B11_'):
+                parts = key.split('_')
+                if len(parts) >= 2:
+                    layer_name = parts[1]
+                    if layer_name == "WMM":
+                        bo_value = value / 1000 if pd.notna(value) and value != 0 else 0
+                        print(f"[OK] Found B11 'WMM' in dictionary: {key} = {value}, BO value = {bo_value}")
+                        bo_found = True
+                        break
+    
+    if not bo_found:
+        print("[OK] No WMM found in B10 or B11, BO value = 0")
+    
+    # Column BP = C11/1000
+    BP_COL_INDEX = 67
+    bp_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B11_'):
+            bp_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B11 in dictionary: {key} = {value}, BP value = {bp_value}")
+            break
+    if bp_value == 0:
+        print("[OK] No B11 found in dictionary, BP value = 0")
+    
+    # Column BQ = C23/1000
+    BQ_COL_INDEX = 68
+    bq_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B23_'):
+            bq_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B23 in dictionary: {key} = {value}, BQ value = {bq_value}")
+            break
+    if bq_value == 0:
+        print("[OK] No B23 found in dictionary, BQ value = 0")
+    
+    # Column BR = C24/1000
+    BR_COL_INDEX = 69
+    br_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B24_'):
+            br_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B24 in dictionary: {key} = {value}, BR value = {br_value}")
+            break
+    if br_value == 0:
+        print("[OK] No B24 found in dictionary, BR value = 0")
+    
+    # Column BS = IF B10="RAP" THEN C10/1000 ELSE 0
+    BS_COL_INDEX = 70
+    bs_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B10_RAP_'):
+            bs_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B10 RAP in dictionary: {key} = {value}, BS value = {bs_value}")
+            break
+    if bs_value == 0:
+        print("[OK] No RAP found in B10, BS value = 0")
+    
+    # Column BT = IF B12="BM" THEN C12/1000 ELSE 0
+    BT_COL_INDEX = 71
+    bt_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B12_BM_'):
+            bt_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B12 BM in dictionary: {key} = {value}, BT value = {bt_value}")
+            break
+    if bt_value == 0:
+        print("[OK] No BM found in B12, BT value = 0")
+    
+    # Column BU = IF B13="DBM" THEN C13/1000 ELSE 0
+    BU_COL_INDEX = 72
+    bu_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B13_DBM_'):
+            bu_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B13 DBM in dictionary: {key} = {value}, BU value = {bu_value}")
+            break
+    if bu_value == 0:
+        print("[OK] No DBM found in B13, BU value = 0")
+    
+    # Column BV = IF B14="PC&SC" THEN C14/1000 ELSE 0
+    BV_COL_INDEX = 73
+    bv_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B14_PC&SC_'):
+            bv_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B14 PC&SC in dictionary: {key} = {value}, BV value = {bv_value}")
+            break
+    if bv_value == 0:
+        print("[OK] No PC&SC found in B14, BV value = 0")
+    
+    # Column BW = IF B15="SDBC" THEN C15/1000 ELSE 0
+    BW_COL_INDEX = 74
+    bw_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B15_SDBC_'):
+            bw_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B15 SDBC in dictionary: {key} = {value}, BW value = {bw_value}")
+            break
+    if bw_value == 0:
+        print("[OK] No SDBC found in B15, BW value = 0")
+    
+    # Column BX = IF B16="BC" THEN C16/1000 ELSE 0
+    BX_COL_INDEX = 75
+    bx_value = 0
+    for key, value in pavement_dict.items():
+        if key.startswith('B16_BC_'):
+            bx_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"[OK] Found B16 BC in dictionary: {key} = {value}, BX value = {bx_value}")
+            break
+    if bx_value == 0:
+        print("[OK] No BC found in B16, BX value = 0")
+    
+    # Set columns
     for col_idx, col_value, col_name in [
         (AY_COL_INDEX, ay_value, 'LHS_GSB_Thickness'),
         (BA_COL_INDEX, ba_value, 'LHS_WMM_Thickness'),
@@ -372,6 +525,18 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
         (BH_COL_INDEX, bh_value, 'LHS_PC&SC_Thickness'),
         (BI_COL_INDEX, bi_value, 'LHS_SDBC_Thickness'),
         (BJ_COL_INDEX, bj_value, 'LHS_BC_Thickness'),
+        (BL_COL_INDEX, bl_value, 'RHS_CTSB_Thickness'),
+        (BN_COL_INDEX, bn_value, 'RHS_CTB_Thickness'),
+        (BO_COL_INDEX, bo_value, 'RHS_WMM_Thickness'),
+        (BP_COL_INDEX, bp_value, 'RHS_AIL_Thickness'),
+        (BQ_COL_INDEX, bq_value, 'RHS_DLC_Thickness'),
+        (BR_COL_INDEX, br_value, 'RHS_PQC_Thickness'),
+        (BS_COL_INDEX, bs_value, 'RHS_RAP_Thickness'),
+        (BT_COL_INDEX, bt_value, 'RHS_BM_Thickness'),
+        (BU_COL_INDEX, bu_value, 'RHS_DBM_Thickness'),
+        (BV_COL_INDEX, bv_value, 'RHS_PC&SC_Thickness'),
+        (BW_COL_INDEX, bw_value, 'RHS_SDBC_Thickness'),
+        (BX_COL_INDEX, bx_value, 'RHS_BC_Thickness'),
     ]:
         if len(df.columns) <= col_idx:
             while len(df.columns) < col_idx:

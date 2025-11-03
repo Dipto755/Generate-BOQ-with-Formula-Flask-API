@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 """
-Excel Formula Recalculation Script using LibreOffice
+Excel Formula Recalculation Script for main_carriageway.xlsx
 
-This script recalculates all formulas in an Excel file using LibreOffice Calc
+This script recalculates all formulas in data/main_carriageway.xlsx using LibreOffice Calc
 and scans for formula errors.
 
 Usage:
-    python recalc.py <excel_file> [timeout_seconds]
-
-Example:
-    python recalc.py output.xlsx 30
+    python recalc.py [timeout_seconds]
 """
 
 import sys
@@ -31,38 +28,24 @@ class ExcelRecalculator:
     def __init__(self):
         self.system = platform.system()
         self.libreoffice_path = self._find_libreoffice()
+        
+        # Fix Excel path - go up two levels from src/internal to project root, then into data/
+        current_dir = Path(__file__).parent
+        self.excel_path = current_dir.parent.parent / "data" / "main_carriageway.xlsx"
     
     def _find_libreoffice(self):
         """Find LibreOffice installation path."""
         if self.system == 'Linux':
-            # Common Linux paths
-            possible_paths = [
-                '/usr/bin/libreoffice',
-                '/usr/bin/soffice',
-                '/usr/local/bin/libreoffice',
-                '/snap/bin/libreoffice'
-            ]
+            return '/usr/bin/libreoffice'
         elif self.system == 'Darwin':  # macOS
-            possible_paths = [
-                '/Applications/LibreOffice.app/Contents/MacOS/soffice'
-            ]
+            return '/Applications/LibreOffice.app/Contents/MacOS/soffice'
         elif self.system == 'Windows':
-            possible_paths = [
-                'C:\\Program Files\\LibreOffice\\program\\soffice.exe',
-                'C:\\Program Files (x86)\\LibreOffice\\program\\soffice.exe'
-            ]
-        else:
-            return None
-        
-        for path in possible_paths:
-            if os.path.exists(path):
-                return path
-        
+            return 'C:\\Program Files\\LibreOffice\\program\\soffice.exe'
         return None
     
     def _check_libreoffice(self):
         """Check if LibreOffice is available."""
-        if not self.libreoffice_path:
+        if not self.libreoffice_path or not os.path.exists(self.libreoffice_path):
             raise RuntimeError(
                 "LibreOffice not found. Please install LibreOffice:\n"
                 "  Ubuntu/Debian: sudo apt-get install libreoffice\n"
@@ -70,12 +53,11 @@ class ExcelRecalculator:
                 "  Or download from: https://www.libreoffice.org/download/"
             )
     
-    def recalculate(self, excel_path, timeout=60):
+    def recalculate(self, timeout=60):
         """
-        Recalculate all formulas in the Excel file.
+        Recalculate all formulas in data/main_carriageway.xlsx.
         
         Args:
-            excel_path: Path to Excel file
             timeout: Timeout in seconds (default: 60)
         
         Returns:
@@ -83,30 +65,32 @@ class ExcelRecalculator:
         """
         self._check_libreoffice()
         
-        excel_path = Path(excel_path).resolve()
+        print(f"Looking for Excel file at: {self.excel_path}")
+        print(f"Excel file exists: {self.excel_path.exists()}")
         
-        if not excel_path.exists():
-            raise FileNotFoundError(f"Excel file not found: {excel_path}")
+        if not self.excel_path.exists():
+            # Try alternative path - one level up from src/internal to src/data/
+            alternative_path = Path(__file__).parent.parent / "data" / "main_carriageway.xlsx"
+            print(f"Trying alternative path: {alternative_path}")
+            print(f"Alternative path exists: {alternative_path.exists()}")
+            
+            if alternative_path.exists():
+                self.excel_path = alternative_path
+                print(f"Using alternative path: {self.excel_path}")
+            else:
+                raise FileNotFoundError(f"Excel file not found at: {self.excel_path}\nAlso tried: {alternative_path}")
         
-        print(f"Recalculating formulas in: {excel_path}")
-        
-        # Create a macro to recalculate and save
-        macro_script = self._create_recalc_macro()
-        
-        # Create temporary macro file
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.bas', delete=False) as f:
-            macro_path = f.name
-            f.write(macro_script)
+        print(f"Recalculating formulas in: {self.excel_path}")
         
         try:
-            # Convert file using LibreOffice headless mode
+            # Convert file using LibreOffice headless mode (this recalculates formulas)
             cmd = [
                 self.libreoffice_path,
                 '--headless',
                 '--calc',
                 '--convert-to', 'xlsx',
-                '--outdir', str(excel_path.parent),
-                str(excel_path)
+                '--outdir', str(self.excel_path.parent),
+                str(self.excel_path)
             ]
             
             print("Running LibreOffice...")
@@ -119,7 +103,8 @@ class ExcelRecalculator:
             
             if result.returncode != 0:
                 print(f"Warning: LibreOffice returned code {result.returncode}")
-                print(f"stderr: {result.stderr}")
+                if result.stderr:
+                    print(f"stderr: {result.stderr}")
             
             print("✓ Formulas recalculated")
             
@@ -129,33 +114,14 @@ class ExcelRecalculator:
         except Exception as e:
             raise RuntimeError(f"Error running LibreOffice: {str(e)}")
         
-        finally:
-            # Clean up temporary macro file
-            if os.path.exists(macro_path):
-                os.remove(macro_path)
-        
         # Scan for errors
-        error_report = self.scan_errors(excel_path)
+        error_report = self.scan_errors()
         
         return error_report
     
-    def _create_recalc_macro(self):
-        """Create LibreOffice Basic macro for recalculation."""
-        return """
-Sub RecalculateAll
-    Dim oDoc As Object
-    oDoc = ThisComponent
-    oDoc.calculateAll()
-    oDoc.store()
-End Sub
-"""
-    
-    def scan_errors(self, excel_path):
+    def scan_errors(self):
         """
         Scan Excel file for formula errors.
-        
-        Args:
-            excel_path: Path to Excel file
         
         Returns:
             Dictionary with error report
@@ -164,7 +130,7 @@ End Sub
         
         print("Scanning for formula errors...")
         
-        wb = load_workbook(excel_path, data_only=True)
+        wb = load_workbook(self.excel_path, data_only=True)
         
         error_summary = {}
         total_errors = 0
@@ -175,7 +141,6 @@ End Sub
             
             for row in sheet.iter_rows():
                 for cell in row:
-                    # Check if cell has a value
                     if cell.value is not None:
                         cell_value = str(cell.value)
                         
@@ -196,7 +161,7 @@ End Sub
                                 )
         
         # Count formulas
-        wb_formulas = load_workbook(excel_path, data_only=False)
+        wb_formulas = load_workbook(self.excel_path, data_only=False)
         for sheet_name in wb_formulas.sheetnames:
             sheet = wb_formulas[sheet_name]
             for row in sheet.iter_rows():
@@ -218,7 +183,8 @@ End Sub
         report = {
             "status": status,
             "total_errors": total_errors,
-            "total_formulas": total_formulas
+            "total_formulas": total_formulas,
+            "file": str(self.excel_path)
         }
         
         if total_errors > 0:
@@ -229,18 +195,11 @@ End Sub
 
 def main():
     """Main entry point."""
-    if len(sys.argv) < 2:
-        print("Usage: python recalc.py <excel_file> [timeout_seconds]")
-        print("\nExample:")
-        print("  python recalc.py output.xlsx 30")
-        return 1
-    
-    excel_file = sys.argv[1]
-    timeout = int(sys.argv[2]) if len(sys.argv) > 2 else 60
+    timeout = int(sys.argv[1]) if len(sys.argv) > 1 else 60
     
     try:
         recalculator = ExcelRecalculator()
-        result = recalculator.recalculate(excel_file, timeout=timeout)
+        result = recalculator.recalculate(timeout=timeout)
         
         # Print JSON report
         print("\nRecalculation Report:")

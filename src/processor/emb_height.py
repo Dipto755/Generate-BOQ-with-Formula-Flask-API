@@ -146,9 +146,14 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
             df.iloc[idx, AR_COL_INDEX] = heights['right']
             matched += 1
         else:
-            # Set to None for unmatched
-            df.iloc[idx, AQ_COL_INDEX] = None
-            df.iloc[idx, AR_COL_INDEX] = None
+            # Fill with value from exactly upper cell (previous row)
+            if idx > 0:
+                df.iloc[idx, AQ_COL_INDEX] = df.iloc[idx - 1, AQ_COL_INDEX]
+                df.iloc[idx, AR_COL_INDEX] = df.iloc[idx - 1, AR_COL_INDEX]
+            else:
+                # For the first row, set to None if unmatched
+                df.iloc[idx, AQ_COL_INDEX] = None
+                df.iloc[idx, AR_COL_INDEX] = None
             unmatched += 1
         
         # Progress indicator

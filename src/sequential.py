@@ -12,10 +12,13 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Define scripts in execution order
 SCRIPTS = [
-    ('tcs_schedule.py', 'TCS Schedule Processing'),
-    ('tcs_input.py', 'TCS Input Processing'),
-    ('emb_height.py', 'Embankment Height Processing'),
-    ('pavement_input.py', 'Pavement Input Processing')
+    ('processor/tcs_schedule.py', 'TCS Schedule Processing'),
+    ('processor/tcs_input.py', 'TCS Input Processing'),
+    ('processor/emb_height.py', 'Embankment Height Processing'),
+    ('processor/pavement_input.py', 'Pavement Input Processing'),
+    ('processor/constant_fill.py', 'Constant Fill Processing'),
+    ('internal/formula_applier.py', 'Formula Applier Processing'),
+    ('internal/recalc.py', 'Excel Formula Recalculation'),
 ]
 
 def run_script(script_name, description):

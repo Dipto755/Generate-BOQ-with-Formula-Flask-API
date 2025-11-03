@@ -2,8 +2,8 @@
 """
 Excel Formula Recalculation Script for main_carriageway.xlsx
 
-This script recalculates all formulas in data/main_carriageway.xlsx using LibreOffice Calc
-and scans for formula errors.
+This script recalculates all formulas in output/main_carriageway.xlsx using LibreOffice Calc
+and scans for formula errors in the Quantity sheet.
 
 Usage:
     python recalc.py [timeout_seconds]
@@ -29,9 +29,12 @@ class ExcelRecalculator:
         self.system = platform.system()
         self.libreoffice_path = self._find_libreoffice()
         
-        # Fix Excel path - go up two levels from src/internal to project root, then into data/
+        # Set paths for output file
         current_dir = Path(__file__).parent
-        self.excel_path = current_dir.parent.parent / "data" / "main_carriageway.xlsx"
+        self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
+        
+        # Ensure output directory exists
+        self.output_excel_path.parent.mkdir(parents=True, exist_ok=True)
     
     def _find_libreoffice(self):
         """Find LibreOffice installation path."""
@@ -55,7 +58,7 @@ class ExcelRecalculator:
     
     def recalculate(self, timeout=60):
         """
-        Recalculate all formulas in data/main_carriageway.xlsx.
+        Recalculate all formulas in output/main_carriageway.xlsx.
         
         Args:
             timeout: Timeout in seconds (default: 60)
@@ -65,22 +68,13 @@ class ExcelRecalculator:
         """
         self._check_libreoffice()
         
-        print(f"Looking for Excel file at: {self.excel_path}")
-        print(f"Excel file exists: {self.excel_path.exists()}")
+        print(f"Looking for output Excel file at: {self.output_excel_path}")
+        print(f"Output Excel file exists: {self.output_excel_path.exists()}")
         
-        if not self.excel_path.exists():
-            # Try alternative path - one level up from src/internal to src/data/
-            alternative_path = Path(__file__).parent.parent / "data" / "main_carriageway.xlsx"
-            print(f"Trying alternative path: {alternative_path}")
-            print(f"Alternative path exists: {alternative_path.exists()}")
-            
-            if alternative_path.exists():
-                self.excel_path = alternative_path
-                print(f"Using alternative path: {self.excel_path}")
-            else:
-                raise FileNotFoundError(f"Excel file not found at: {self.excel_path}\nAlso tried: {alternative_path}")
+        if not self.output_excel_path.exists():
+            raise FileNotFoundError(f"Output Excel file not found at: {self.output_excel_path}")
         
-        print(f"Recalculating formulas in: {self.excel_path}")
+        print(f"Recalculating formulas in: {self.output_excel_path}")
         
         try:
             # Convert file using LibreOffice headless mode (this recalculates formulas)
@@ -89,8 +83,8 @@ class ExcelRecalculator:
                 '--headless',
                 '--calc',
                 '--convert-to', 'xlsx',
-                '--outdir', str(self.excel_path.parent),
-                str(self.excel_path)
+                '--outdir', str(self.output_excel_path.parent),
+                str(self.output_excel_path)
             ]
             
             print("Running LibreOffice...")
@@ -114,57 +108,85 @@ class ExcelRecalculator:
         except Exception as e:
             raise RuntimeError(f"Error running LibreOffice: {str(e)}")
         
-        # Scan for errors
+        # Scan for errors in Quantity sheet starting from row 7
         error_report = self.scan_errors()
         
         return error_report
     
-    def scan_errors(self):
+    def scan_errors(self, start_row=7):
         """
-        Scan Excel file for formula errors.
+        Scan Quantity sheet for formula errors starting from specified row.
+        
+        Args:
+            start_row: Starting row to scan from (default: 7)
         
         Returns:
             Dictionary with error report
         """
         from openpyxl import load_workbook
         
-        print("Scanning for formula errors...")
+        print(f"Scanning for formula errors in Quantity sheet from row {start_row}...")
         
-        wb = load_workbook(self.excel_path, data_only=True)
+        wb = load_workbook(self.output_excel_path, data_only=True)
         
         error_summary = {}
         total_errors = 0
         total_formulas = 0
+        scanned_cells = 0
         
-        for sheet_name in wb.sheetnames:
-            sheet = wb[sheet_name]
+        sheet_name = "Quantity"
+        
+        if sheet_name not in wb.sheetnames:
+            print(f"⚠ Warning: Sheet '{sheet_name}' not found in {self.output_excel_path}")
+            wb.close()
+            return {
+                "status": "sheet_not_found",
+                "total_errors": 0,
+                "total_formulas": 0,
+                "scanned_cells": 0,
+                "file": str(self.output_excel_path),
+                "sheet": sheet_name,
+                "start_row": start_row
+            }
+        
+        sheet = wb[sheet_name]
+        
+        # Scan only from start_row onwards
+        for row_num, row in enumerate(sheet.iter_rows(), 1):
+            if row_num < start_row:
+                continue
+                
+            for cell in row:
+                scanned_cells += 1
+                if cell.value is not None:
+                    cell_value = str(cell.value)
+                    
+                    # Check if it's an error
+                    for error_type in self.ERROR_TYPES:
+                        if error_type in cell_value:
+                            total_errors += 1
+                            
+                            if error_type not in error_summary:
+                                error_summary[error_type] = {
+                                    'count': 0,
+                                    'locations': []
+                                }
+                            
+                            error_summary[error_type]['count'] += 1
+                            error_summary[error_type]['locations'].append(
+                                f"{sheet_name}!{cell.coordinate}"
+                            )
+        
+        # Count formulas in Quantity sheet from start_row
+        wb_formulas = load_workbook(self.output_excel_path, data_only=False)
+        
+        if sheet_name in wb_formulas.sheetnames:
+            sheet_formulas = wb_formulas[sheet_name]
             
-            for row in sheet.iter_rows():
-                for cell in row:
-                    if cell.value is not None:
-                        cell_value = str(cell.value)
-                        
-                        # Check if it's an error
-                        for error_type in self.ERROR_TYPES:
-                            if error_type in cell_value:
-                                total_errors += 1
-                                
-                                if error_type not in error_summary:
-                                    error_summary[error_type] = {
-                                        'count': 0,
-                                        'locations': []
-                                    }
-                                
-                                error_summary[error_type]['count'] += 1
-                                error_summary[error_type]['locations'].append(
-                                    f"{sheet_name}!{cell.coordinate}"
-                                )
-        
-        # Count formulas
-        wb_formulas = load_workbook(self.excel_path, data_only=False)
-        for sheet_name in wb_formulas.sheetnames:
-            sheet = wb_formulas[sheet_name]
-            for row in sheet.iter_rows():
+            for row_num, row in enumerate(sheet_formulas.iter_rows(), 1):
+                if row_num < start_row:
+                    continue
+                    
                 for cell in row:
                     if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
                         total_formulas += 1
@@ -175,16 +197,101 @@ class ExcelRecalculator:
         # Build report
         if total_errors > 0:
             status = "errors_found"
-            print(f"⚠ Found {total_errors} formula errors")
+            print(f"⚠ Found {total_errors} formula errors in Quantity sheet (rows {start_row}+)")
         else:
             status = "success"
-            print("✓ No formula errors found")
+            print(f"✓ No formula errors found in Quantity sheet (rows {start_row}+)")
         
         report = {
             "status": status,
             "total_errors": total_errors,
             "total_formulas": total_formulas,
-            "file": str(self.excel_path)
+            "scanned_cells": scanned_cells,
+            "file": str(self.output_excel_path),
+            "sheet": sheet_name,
+            "start_row": start_row,
+            "scanned_range": f"Row {start_row} to end"
+        }
+        
+        if total_errors > 0:
+            report["error_summary"] = error_summary
+        
+        return report
+    
+    def scan_specific_range(self, sheet_name="Quantity", start_row=7, end_row=None, columns=None):
+        """
+        Scan a specific range in the output file for errors.
+        
+        Args:
+            sheet_name: Sheet to scan (default: "Quantity")
+            start_row: Starting row (default: 7)
+            end_row: Ending row (optional)
+            columns: Specific columns to scan (optional)
+        
+        Returns:
+            Dictionary with error report
+        """
+        from openpyxl import load_workbook
+        
+        print(f"Scanning {sheet_name} sheet from row {start_row}...")
+        
+        wb = load_workbook(self.output_excel_path, data_only=True)
+        
+        if sheet_name not in wb.sheetnames:
+            wb.close()
+            return {
+                "status": "sheet_not_found",
+                "total_errors": 0,
+                "file": str(self.output_excel_path),
+                "sheet": sheet_name
+            }
+        
+        sheet = wb[sheet_name]
+        error_summary = {}
+        total_errors = 0
+        scanned_cells = 0
+        
+        # Determine range to scan
+        max_row = end_row if end_row else sheet.max_row
+        
+        for row_num in range(start_row, max_row + 1):
+            if columns:
+                # Scan specific columns
+                for col in columns:
+                    cell = sheet[f"{col}{row_num}"]
+                    scanned_cells += 1
+                    if cell.value is not None:
+                        cell_value = str(cell.value)
+                        for error_type in self.ERROR_TYPES:
+                            if error_type in cell_value:
+                                total_errors += 1
+                                if error_type not in error_summary:
+                                    error_summary[error_type] = {'count': 0, 'locations': []}
+                                error_summary[error_type]['count'] += 1
+                                error_summary[error_type]['locations'].append(f"{sheet_name}!{cell.coordinate}")
+            else:
+                # Scan entire row
+                for cell in sheet[row_num]:
+                    scanned_cells += 1
+                    if cell.value is not None:
+                        cell_value = str(cell.value)
+                        for error_type in self.ERROR_TYPES:
+                            if error_type in cell_value:
+                                total_errors += 1
+                                if error_type not in error_summary:
+                                    error_summary[error_type] = {'count': 0, 'locations': []}
+                                error_summary[error_type]['count'] += 1
+                                error_summary[error_type]['locations'].append(f"{sheet_name}!{cell.coordinate}")
+        
+        wb.close()
+        
+        report = {
+            "status": "errors_found" if total_errors > 0 else "success",
+            "total_errors": total_errors,
+            "scanned_cells": scanned_cells,
+            "file": str(self.output_excel_path),
+            "sheet": sheet_name,
+            "range": f"Rows {start_row}-{max_row}" + (f", Columns {columns}" if columns else "")
         }
         
         if total_errors > 0:
@@ -199,6 +306,8 @@ def main():
     
     try:
         recalculator = ExcelRecalculator()
+        
+        # Recalculate formulas
         result = recalculator.recalculate(timeout=timeout)
         
         # Print JSON report

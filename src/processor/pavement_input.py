@@ -21,10 +21,10 @@ root_dir = os.path.join(script_dir, '..', '..')
 
 # Input files
 PAVEMENT_INPUT_FILE = os.path.join(root_dir, 'data', 'Pavement Input.xlsx')
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 # Output file
-OUTPUT_EXCEL = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 
 # ============================================================================
@@ -101,16 +101,19 @@ def create_pavement_dictionary(pavement_input_file):
 def populate_columns(main_carriageway_file, pavement_dict, output_file):
     """
     Reads main_carriageway.xlsx
-    Populates columns based on formula:
+    Populates columns based on formula
     """
     print("\n" + "="*80)
-    print("STEP 2: Populating main_carriageway.xlsx Column AX")
+    print("STEP 2: Populating main_carriageway.xlsx")
     print("="*80)
     
     # Read the main carriageway file
-    df = pd.read_excel(main_carriageway_file)
+    df = pd.read_excel(main_carriageway_file, sheet_name='Quantity', skiprows=6, header=None)
     print("[OK] Read main_carriageway.xlsx:", len(df), "rows")
     print("  Current columns:", len(df.columns))
+    
+    # Remove empty rows
+    df = df.dropna(how='all')
     
     # Column AX = index 49
     AX_COL_INDEX = 49
@@ -300,18 +303,13 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     if bg_value == 0:
         print("✓ No DBM found in E13, BG value = 0")
     
-    # Ensure column AX exists
+    # NEW CODE (without column naming) for AX
     if len(df.columns) <= AX_COL_INDEX:
-        # Add empty columns up to AX
         while len(df.columns) < AX_COL_INDEX:
             df[f'Empty_{len(df.columns)}'] = None
-        # Add column AX
-        df.insert(AX_COL_INDEX, 'CTSB_Thickness', ax_value)
+        df.insert(AX_COL_INDEX, f'Col_{AX_COL_INDEX}', ax_value)  # Simple column name
     else:
-        # Column exists, update it
         df.iloc[:, AX_COL_INDEX] = ax_value
-        if df.columns[AX_COL_INDEX] != 'CTSB_Thickness':
-            df.columns.values[AX_COL_INDEX] = 'CTSB_Thickness'
     
     print(f"\n[OK] Column AX (index {AX_COL_INDEX}) set to: {ax_value}")
     print(f"  Total columns: {len(df.columns)}")
@@ -345,16 +343,11 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     
     # Ensure column AZ exists
     if len(df.columns) <= AZ_COL_INDEX:
-        # Add empty columns up to AZ
         while len(df.columns) < AZ_COL_INDEX:
             df[f'Empty_{len(df.columns)}'] = None
-        # Add column AZ
-        df.insert(AZ_COL_INDEX, 'CTB_Thickness', az_value)
+        df.insert(AZ_COL_INDEX, f'Col_{AZ_COL_INDEX}', az_value)
     else:
-        # Column exists, update it
         df.iloc[:, AZ_COL_INDEX] = az_value
-        if df.columns[AZ_COL_INDEX] != 'CTB_Thickness':
-            df.columns.values[AZ_COL_INDEX] = 'CTB_Thickness'
     print(f"[OK] Column AZ (index {AZ_COL_INDEX}) set to: {az_value}")
     print(f"  Total columns: {len(df.columns)}")
     
@@ -569,15 +562,16 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
         if len(df.columns) <= col_idx:
             while len(df.columns) < col_idx:
                 df[f'Empty_{len(df.columns)}'] = None
-            df.insert(col_idx, col_name, col_value)
+            df.insert(col_idx, f'Col_{col_idx}', col_value)
         else:
             df.iloc[:, col_idx] = col_value
-            df.columns.values[col_idx] = col_name
         print(f"[OK] Column index {col_idx} ({col_name}) set to: {col_value}")
     
-    # Save to Excel
+    # Save to Excel using ExcelWriter with overlay mode
     print(f"\n[OK] Saving to {output_file}...")
-    df.to_excel(output_file, index=False, sheet_name='Main Carriageway')
+    
+    with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+        df.to_excel(writer, sheet_name='Quantity', startrow=6, startcol=0, index=False, header=False)
     
     print("[OK] Saved!")
     
@@ -595,8 +589,8 @@ def main():
     print("="*80)
     print("Configuration:")
     print("  • Pavement_Input.xlsx: Read from Excel row 9 (Col B, C, E, F)")
-    print("  • main_carriageway.xlsx: Populate column AX")
-    print("  • Formula: IF E9='CTSB' THEN F9/1000 ELSE 0")
+    print("  • main_carriageway.xlsx: Populate columns")
+    print("  • Output: Save to output folder")
     print("="*80 + "\n")
     
     try:
@@ -624,13 +618,13 @@ def main():
             print(f"  Row {idx + 2}: {ax_val}")
         
     except FileNotFoundError as e:
-        print("\n[ERROR] ERROR: File not found")
+        print("\n[ERROR] File not found")
         print(" ", e)
         print("\nPlease check:")
-        print("  1. Files exist in the data folder")
+        print("  1. Files exist in the correct folders")
         print("  2. File names match exactly")
     except Exception as e:
-        print("\n[ERROR] ERROR:", e)
+        print("\n[ERROR]", e)
         import traceback
         traceback.print_exc()
 

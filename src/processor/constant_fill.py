@@ -19,8 +19,8 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 root_dir = os.path.join(script_dir, '..', '..')
 
 # Input/Output file
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
-OUTPUT_EXCEL = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
+OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 
 # ============================================================================
@@ -54,9 +54,12 @@ def fill_constant_columns(main_carriageway_file, constants, output_file):
     print("="*80)
     
     # Read the main carriageway file
-    df = pd.read_excel(main_carriageway_file)
+    df = pd.read_excel(main_carriageway_file, sheet_name='Quantity', skiprows=6, header=None)
     print("[OK] Read main_carriageway.xlsx:", len(df), "rows")
     print("  Current columns:", len(df.columns))
+    
+    # Remove empty rows
+    df = df.dropna(how='all')
     
     # Process each constant column
     for const in constants:
@@ -72,23 +75,20 @@ def fill_constant_columns(main_carriageway_file, constants, output_file):
             while len(df.columns) < col_idx:
                 df[f'Empty_{len(df.columns)}'] = None
             # Add target column
-            df.insert(col_idx, col_name, value)
-            print(f"  [OK] Created new column '{col_name}' with value {value}")
+            df.insert(col_idx, f'Col_{col_idx}', value)
+            print(f"  [OK] Created new column with value {value}")
         else:
             # Column exists, update it
             df.iloc[:, col_idx] = value
-            # Update column name if different
-            if df.columns[col_idx] != col_name:
-                df.columns.values[col_idx] = col_name
-                print(f"  [OK] Updated column to '{col_name}' with value {value}")
-            else:
-                print(f"  [OK] Filled column '{col_name}' with value {value}")
+            print(f"  [OK] Filled column with value {value}")
         
         print(f"  [OK] All {len(df)} rows set to {value}")
     
-    # Save to Excel
+    # Save to Excel using ExcelWriter with overlay mode
     print(f"\n[OK] Saving to {output_file}...")
-    df.to_excel(output_file, index=False, sheet_name='Main Carriageway')
+    
+    with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+        df.to_excel(writer, sheet_name='Quantity', startrow=6, startcol=0, index=False, header=False)
     
     print("[OK] Saved!")
     print(f"  Total columns: {len(df.columns)}")

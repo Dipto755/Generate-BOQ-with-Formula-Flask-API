@@ -19,6 +19,7 @@ SCRIPTS = [
     ('processor/constant_fill.py', 'Constant Fill Processing'),
     ('internal/formula_applier.py', 'Formula Applier Processing'),
     ('internal/recalc.py', 'Excel Formula Recalculation'),
+    ('internal/pavement_input_with_internal.py', 'Pavement Input with Internal Processing'),
 ]
 
 def run_script(script_name, description):

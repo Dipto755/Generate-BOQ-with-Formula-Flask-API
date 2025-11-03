@@ -234,6 +234,32 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     
     if be_value == 0:
         print("✓ No RAP found in E10, BE value = 0")
+        
+    # Column BF = IF E12="BM" THEN F12/1000 ELSE 0
+    BF_COL_INDEX = 57
+    bf_value = 0
+    
+    for key, value in pavement_dict.items():
+        if key.startswith('E12_BM_'):
+            bf_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"✓ Found E12 BM in dictionary: {key} = {value}, BF value = {bf_value}")
+            break
+    
+    if bf_value == 0:
+        print("✓ No BM found in E12, BF value = 0")
+    
+    # Column BG = IF E13="DBM" THEN F13/1000 ELSE 0
+    BG_COL_INDEX = 58
+    bg_value = 0
+    
+    for key, value in pavement_dict.items():
+        if key.startswith('E13_DBM_'):
+            bg_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"✓ Found E13 DBM in dictionary: {key} = {value}, BG value = {bg_value}")
+            break
+    
+    if bg_value == 0:
+        print("✓ No DBM found in E13, BG value = 0")
     
     # Ensure column AX exists
     if len(df.columns) <= AX_COL_INDEX:
@@ -273,7 +299,9 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
         (BB_COL_INDEX, bb_value, 'LHS_AIL_Thickness'),
         (BC_COL_INDEX, bc_value, 'LHS_DLC_Thickness'),
         (BD_COL_INDEX, bd_value, 'LHS_PQC_Thickness'),
-        (BE_COL_INDEX, be_value, 'LHS_RAP_Thickness')
+        (BE_COL_INDEX, be_value, 'LHS_RAP_Thickness'),
+        (BF_COL_INDEX, bf_value, 'LHS_BM_Thickness'),
+        (BG_COL_INDEX, bg_value, 'LHS_DBM_Thickness'),
     ]:
         if len(df.columns) <= col_idx:
             while len(df.columns) < col_idx:

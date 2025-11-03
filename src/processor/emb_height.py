@@ -1,7 +1,7 @@
 """
 Embankment Height Processor
 Reads Emb_Height.xlsx from row 5, columns A, E, F
-Populates main_carriageway.xlsx columns AQ and AR from row 1 onwards
+Populates main_carriageway.xlsx Quantity sheet columns AQ and AR from row 7 onwards
 """
 
 import pandas as pd
@@ -20,10 +20,10 @@ root_dir = os.path.join(script_dir, '..', '..')
 
 # Input files
 EMB_HEIGHT_FILE = os.path.join(root_dir, 'data', 'Emb Height.xlsx')
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 # Output file
-OUTPUT_EXCEL = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 
 # ============================================================================
@@ -98,70 +98,57 @@ def create_emb_height_dictionary(emb_height_file):
 
 def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
     """
-    Reads main_carriageway.xlsx
-    Matches Column A with dict keys starting from Excel row 1
+    Reads main_carriageway.xlsx Quantity sheet from row 7 onwards
+    Matches Column A with dict keys
     Populates columns AQ (index 42) and AR (index 43) with embankment heights
+    Writes back starting from row 7
     """
     print("\n" + "="*80)
-    print("STEP 2: Populating main_carriageway.xlsx")
+    print("STEP 2: Populating main_carriageway.xlsx (Quantity sheet)")
     print("="*80)
     
-    # Read the main carriageway file
-    df = pd.read_excel(main_carriageway_file)
-    print("[OK] Read main_carriageway.xlsx:", len(df), "rows")
+    # Read data from row 7 onwards (skiprows=6 to skip rows 1-6)
+    df = pd.read_excel(main_carriageway_file, sheet_name='Quantity', skiprows=6, header=None)
+    
+    # Remove empty rows
+    df = df.dropna(how='all')
+    
+    print("[OK] Read Quantity sheet from row 7:", len(df), "data rows")
     print("  Current columns:", len(df.columns))
     
-    # EXPLICIT: Ensure columns AQ and AR are at index 42 and 43
     # Column AQ = index 42 (43rd column, 0-indexed)
     # Column AR = index 43 (44th column, 0-indexed)
     AQ_COL_INDEX = 42
     AR_COL_INDEX = 43
     
-    # If dataframe has fewer than 42 columns, we need to add empty columns
-    while len(df.columns) < AQ_COL_INDEX:
-        df['Empty_' + str(len(df.columns))] = None
+    # Ensure we have enough columns
+    while len(df.columns) <= AR_COL_INDEX:
+        df[len(df.columns)] = None
     
-    # Now explicitly add/overwrite columns at positions AQ and AR
-    if len(df.columns) == AQ_COL_INDEX:
-        # AQ doesn't exist, add it
-        df.insert(AQ_COL_INDEX, 'Emb_Height_Left', None)
-    elif len(df.columns) > AQ_COL_INDEX:
-        # AQ exists, rename/overwrite it
-        df.iloc[:, AQ_COL_INDEX] = None
-        df.columns.values[AQ_COL_INDEX] = 'Emb_Height_Left'
-    
-    if len(df.columns) == AR_COL_INDEX:
-        # AR doesn't exist, add it
-        df.insert(AR_COL_INDEX, 'Emb_Height_Right', None)
-    elif len(df.columns) > AR_COL_INDEX:
-        # AR exists, rename/overwrite it
-        df.iloc[:, AR_COL_INDEX] = None
-        df.columns.values[AR_COL_INDEX] = 'Emb_Height_Right'
-    
-    print("\n[OK] Columns AQ and AR explicitly set:")
-    print("  Column AQ (index 42):", df.columns[AQ_COL_INDEX])
-    print("  Column AR (index 43):", df.columns[AR_COL_INDEX])
+    print("\n[OK] Columns AQ (42) and AR (43) ready")
     print("  Total columns:", len(df.columns))
     
-    # Start matching from Excel row 1 (pandas index 0)
-    print("\n[OK] Matching all rows (starting from index 0)")
+    print("\n[OK] Matching rows starting from index 0")
     
     # Match and populate
     matched = 0
     unmatched = 0
     
     for idx in range(len(df)):
-        # Get the key from Column A
+        # Get the key from Column A (index 0)
         key = df.iloc[idx, 0]
         
         # Try to match in dictionary
         if pd.notna(key) and float(key) in emb_dict:
             heights = emb_dict[float(key)]
-            # EXPLICIT: Write to column index 42 (AQ) and 43 (AR)
+            # Write to column index 42 (AQ) and 43 (AR)
             df.iloc[idx, AQ_COL_INDEX] = heights['left']
             df.iloc[idx, AR_COL_INDEX] = heights['right']
             matched += 1
         else:
+            # Set to None for unmatched
+            df.iloc[idx, AQ_COL_INDEX] = None
+            df.iloc[idx, AR_COL_INDEX] = None
             unmatched += 1
         
         # Progress indicator
@@ -176,11 +163,13 @@ def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
         match_pct = matched / (matched + unmatched) * 100
         print("  Match rate: %.1f%%" % match_pct)
     
-    # Save to Excel
-    print("\n[OK] Saving to", output_file, "...")
-    df.to_excel(output_file, index=False, sheet_name='Main Carriageway')
+    # Save to Excel - write to Quantity sheet starting from row 7 (0-indexed row 6)
+    print("\n[OK] Writing to", output_file, "(Quantity sheet, starting row 7)...")
     
-    print("[OK] Saved! Total columns:", len(df.columns))
+    with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+        df.to_excel(writer, sheet_name='Quantity', startrow=6, startcol=0, index=False, header=False)
+    
+    print("[OK] Successfully written", len(df), "rows starting from row 7")
     
     return df, matched, unmatched
 
@@ -196,9 +185,13 @@ def main():
     print("="*80)
     print("Configuration:")
     print("  • Emb_Height.xlsx: Read from Excel row 5 (Col A, E, F)")
-    print("  • main_carriageway.xlsx: Match from Excel row 1 (all rows)")
+    print("  • main_carriageway.xlsx: Quantity sheet, starting row 7")
     print("  • Output: Populate columns AQ and AR")
     print("="*80 + "\n")
+    
+    # Define column indices at the top
+    AQ_COL_INDEX = 42
+    AR_COL_INDEX = 43
     
     try:
         # Step 1: Create embankment height dictionary
@@ -214,7 +207,9 @@ def main():
         print("SUCCESS! [OK]")
         print("="*80)
         print("Output file:", OUTPUT_EXCEL)
-        print("Total rows:", len(df))
+        print("Sheet: Quantity")
+        print("Starting row: 7")
+        print("Total data rows:", len(df))
         print("Total columns:", len(df.columns))
         
         # Show sample output
@@ -223,19 +218,20 @@ def main():
         print("-"*80)
         
         # Find rows with embankment heights populated
-        rows_with_heights = df[df['Emb_Height_Left'].notna()]
+        rows_with_heights = df[df.iloc[:, AQ_COL_INDEX].notna()]
         
         if len(rows_with_heights) > 0:
             print("\nFound", len(rows_with_heights), "rows with embankment heights")
             print("\nFirst 3 rows with heights:")
             
-            for i, (idx, row) in enumerate(rows_with_heights.head(3).iterrows()):
-                print("\n  Row %d (Excel):" % (idx + 2))
+            for i in range(min(3, len(rows_with_heights))):
+                idx = rows_with_heights.index[i]
+                row = rows_with_heights.iloc[i]
+                print("\n  Data row %d (Excel row %d):" % (i + 1, idx + 7))
                 print("    Column A (from):", row.iloc[0])
-                if 'type_of_cross_section' in df.columns:
-                    print("    Type:", row['type_of_cross_section'])
-                print("    Emb_Height_Left (AQ):", row['Emb_Height_Left'])
-                print("    Emb_Height_Right (AR):", row['Emb_Height_Right'])
+                print("    Column D (type):", row.iloc[3] if len(row) > 3 else 'N/A')
+                print("    Column AQ (Emb_Height_Left):", row.iloc[AQ_COL_INDEX])
+                print("    Column AR (Emb_Height_Right):", row.iloc[AR_COL_INDEX])
         else:
             print("\n[WARNING] No matching chainages found")
             print("Possible reasons:")
@@ -247,18 +243,19 @@ def main():
         print("\n" + "="*80)
         print("FINAL COLUMN LAYOUT:")
         print("-"*80)
-        print("  A-AP: Existing", len(df.columns) - 2, "columns")
-        print("  AQ: Emb_Height_Left")
-        print("  AR: Emb_Height_Right")
+        print("  Columns A-AP: First 42 columns")
+        print("  Column AQ (index 42): Emb_Height_Left")
+        print("  Column AR (index 43): Emb_Height_Right")
+        print("  Total columns:", len(df.columns))
         
     except FileNotFoundError as e:
-        print("\n[ERROR] ERROR: File not found")
+        print("\n[ERROR] File not found")
         print(" ", e)
         print("\nPlease check:")
-        print("  1. Files exist in the data folder")
+        print("  1. Files exist in the correct folders")
         print("  2. File names match exactly")
     except Exception as e:
-        print("\n[ERROR] ERROR:", e)
+        print("\n[ERROR]", e)
         import traceback
         traceback.print_exc()
 

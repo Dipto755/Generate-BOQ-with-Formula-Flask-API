@@ -90,6 +90,14 @@ class ExcelRecalculator:
         
         print(f"Recalculating formulas in: {excel_path}")
         
+        # Create a macro to recalculate and save
+        macro_script = self._create_recalc_macro()
+        
+        # Create temporary macro file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.bas', delete=False) as f:
+            macro_path = f.name
+            f.write(macro_script)
+        
         try:
             # Convert file using LibreOffice headless mode
             cmd = [

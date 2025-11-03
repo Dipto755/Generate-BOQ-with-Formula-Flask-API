@@ -252,6 +252,45 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     BG_COL_INDEX = 58
     bg_value = 0
     
+    # Column BH = IF E14="PC&SC" THEN F14/1000 ELSE 0 (with error handling)
+    BH_COL_INDEX = 59
+    bh_value = 0
+    
+    for key, value in pavement_dict.items():
+        if key.startswith('E14_PC&SC_'):
+            bh_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"✓ Found E14 PC&SC in dictionary: {key} = {value}, BH value = {bh_value}")
+            break
+    
+    if bh_value == 0:
+        print("✓ No PC&SC found in E14, BH value = 0")
+    
+    # Column BI = IF E15="SDBC" THEN F15/1000 ELSE 0
+    BI_COL_INDEX = 60
+    bi_value = 0
+    
+    for key, value in pavement_dict.items():
+        if key.startswith('E15_SDBC_'):
+            bi_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"✓ Found E15 SDBC in dictionary: {key} = {value}, BI value = {bi_value}")
+            break
+    
+    if bi_value == 0:
+        print("✓ No SDBC found in E15, BI value = 0")
+    
+    # Column BJ = IF E16="BC" THEN F16/1000 ELSE 0
+    BJ_COL_INDEX = 61
+    bj_value = 0
+    
+    for key, value in pavement_dict.items():
+        if key.startswith('E16_BC_'):
+            bj_value = value / 1000 if pd.notna(value) and value != 0 else 0
+            print(f"✓ Found E16 BC in dictionary: {key} = {value}, BJ value = {bj_value}")
+            break
+    
+    if bj_value == 0:
+        print("✓ No BC found in E16, BJ value = 0")
+    
     for key, value in pavement_dict.items():
         if key.startswith('E13_DBM_'):
             bg_value = value / 1000 if pd.notna(value) and value != 0 else 0
@@ -302,6 +341,9 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
         (BE_COL_INDEX, be_value, 'LHS_RAP_Thickness'),
         (BF_COL_INDEX, bf_value, 'LHS_BM_Thickness'),
         (BG_COL_INDEX, bg_value, 'LHS_DBM_Thickness'),
+        (BH_COL_INDEX, bh_value, 'LHS_PC&SC_Thickness'),
+        (BI_COL_INDEX, bi_value, 'LHS_SDBC_Thickness'),
+        (BJ_COL_INDEX, bj_value, 'LHS_BC_Thickness'),
     ]:
         if len(df.columns) <= col_idx:
             while len(df.columns) < col_idx:

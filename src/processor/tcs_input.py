@@ -25,11 +25,11 @@ root_dir = os.path.join(script_dir, '..', '..')
 
 # Input files
 TCS_INPUT_FILE = os.path.join(root_dir, 'data', 'TCS Input.xlsx')
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 # Output files
 OUTPUT_JSON = os.path.join(root_dir, 'data', 'tcs_specifications.json')
-OUTPUT_EXCEL = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 
 # ============================================================================
@@ -71,17 +71,18 @@ def create_tcs_dictionary(tcs_input_file):
     """
     Reads TCS_Input.xlsx and creates a dictionary with TCS type as key
     Extracts columns D-V, AA-AS, and W
-    Returns: (dictionary with TCS specifications, column W header name)
+    Returns: dictionary with TCS specifications
     """
     print("="*80)
     print("STEP 1: Creating TCS Dictionary (columns D-V, AA-AS, and W)")
     print("="*80)
     
-    # Read the Excel file
-    df = pd.read_excel(tcs_input_file, sheet_name='Input')
+    # Read the Excel file - first row for headers
+    df_headers = pd.read_excel(tcs_input_file, sheet_name='Input', nrows=1)
+    raw_headers = df_headers.iloc[0].tolist()
     
-    # First row contains headers
-    raw_headers = df.iloc[0].tolist()
+    # Read data starting from row 2 (skip header row)
+    df = pd.read_excel(tcs_input_file, sheet_name='Input', skiprows=1, header=None)
     
     # Extract column ranges
     range_1_indices = list(range(RANGE_1_START, RANGE_1_END + 1))
@@ -91,7 +92,7 @@ def create_tcs_dictionary(tcs_input_file):
     print(f"[OK] Extracting columns:")
     print(f"  Range 1: D to V (indices {RANGE_1_START} to {RANGE_1_END}) = {len(range_1_indices)} columns")
     print(f"  Range 2: AA to AS (indices {RANGE_2_START} to {RANGE_2_END}) = {len(range_2_indices)} columns")
-    print(f"  Column W (index {COLUMN_W_INDEX}): {raw_headers[COLUMN_W_INDEX]}")
+    print(f"  Column W (index {COLUMN_W_INDEX})")
     print(f"  Total columns to extract: {len(selected_indices) + 1}")
     
     # Get headers and handle duplicates
@@ -135,24 +136,13 @@ def create_tcs_dictionary(tcs_input_file):
         else:
             selected_headers.append((idx, None))
     
-    # Get column W header
-    column_w_header = raw_headers[COLUMN_W_INDEX] if COLUMN_W_INDEX < len(raw_headers) else None
-    
-    print(f"\n[OK] Selected column headers:")
-    for idx, header in selected_headers[:5]:  # Show first 5
-        if header:
-            print(f"  {idx_to_excel_col(idx)} (index {idx}): {header}")
-    print(f"  ... and {len(selected_headers) - 5} more columns")
-    
-    if column_w_header:
-        print(f"  {idx_to_excel_col(COLUMN_W_INDEX)} (index {COLUMN_W_INDEX}): {column_w_header} → Will populate AS, AT, AU, AV")
+    print(f"\n[OK] Selected {len(selected_headers)} specification columns")
     
     # Create dictionary with TCS type as key
     cs_type_idx = 2  # Column C
-    data = df.iloc[1:].reset_index(drop=True)
     tcs_dict = {}
     
-    for idx, row in data.iterrows():
+    for idx, row in df.iterrows():
         cs_type = row.iloc[cs_type_idx]
         
         if pd.notna(cs_type):
@@ -170,43 +160,47 @@ def create_tcs_dictionary(tcs_input_file):
                         row_dict[header] = str(value)
             
             # Add column W value
-            if column_w_header:
-                w_value = row.iloc[COLUMN_W_INDEX]
-                if pd.isna(w_value):
-                    row_dict['COLUMN_W_VALUE'] = None
-                elif isinstance(w_value, (int, float)):
-                    row_dict['COLUMN_W_VALUE'] = w_value
-                else:
-                    row_dict['COLUMN_W_VALUE'] = str(w_value)
+            w_value = row.iloc[COLUMN_W_INDEX]
+            if pd.isna(w_value):
+                row_dict['COLUMN_W_VALUE'] = None
+            elif isinstance(w_value, (int, float)):
+                row_dict['COLUMN_W_VALUE'] = w_value
+            else:
+                row_dict['COLUMN_W_VALUE'] = str(w_value)
             
             tcs_dict[cs_type] = row_dict
     
     print(f"\n[OK] Created dictionary with {len(tcs_dict)} TCS types")
     print(f"[OK] Each type has {len(selected_headers) + 1} specifications (including column W)")
     
-    return tcs_dict, column_w_header
+    return tcs_dict
 
 
 # ============================================================================
 # STEP 2: Populate main_carriageway.xlsx with Specifications
 # ============================================================================
 
-def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, output_file):
+def populate_specifications(main_carriageway_file, tcs_dict, output_file):
     """
-    Reads main_carriageway.xlsx and adds TCS specifications from dictionary
-    Writes:
-      - Columns E-AP: 38 specification columns
-      - Columns AQ-AR: 2 placeholder columns
-      - Columns AS-AV: 4 columns with column W values
+    Reads main_carriageway.xlsx Quantity sheet from row 7 onwards
+    Adds TCS specifications and writes back starting from row 7
     """
     print("\n" + "="*80)
-    print("STEP 2: Populating main_carriageway.xlsx")
+    print("STEP 2: Populating main_carriageway.xlsx (Quantity sheet)")
     print("="*80)
     
-    # Read the main carriageway file
-    df = pd.read_excel(main_carriageway_file)
-    print(f"[OK] Read main_carriageway.xlsx: {len(df)} rows")
+    # Read data from row 7 onwards (skiprows=6 to skip rows 1-6)
+    df = pd.read_excel(main_carriageway_file, sheet_name='Quantity', skiprows=6, header=None)
+    
+    # Remove empty rows
+    df = df.dropna(how='all')
+    
+    print(f"[OK] Read Quantity sheet from row 7: {len(df)} data rows")
     print(f"  Existing columns: {len(df.columns)}")
+    
+    # KEEP ONLY FIRST 4 COLUMNS (A, B, C, D)
+    df = df.iloc[:, :4].copy()
+    print(f"[OK] Kept first 4 columns (A-D): from, to, length, type_of_cross_section")
     
     # Create case-insensitive lookup dictionary
     tcs_dict_lower = {k.lower(): (k, v) for k, v in tcs_dict.items()}
@@ -218,28 +212,18 @@ def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, outp
             spec_columns = [k for k in specs.keys() if k != 'COLUMN_W_VALUE']
             break
     
-    print(f"[OK] Will add {len(spec_columns)} specification columns from E to AP")
-    print(f"[OK] Will add columns AQ-AR as placeholders")
-    print(f"[OK] Will add columns AS-AV with '{column_w_name}' values")
+    print(f"[OK] Will add {len(spec_columns)} specification columns starting from column E")
+    print(f"[OK] Will add 2 placeholder columns")
+    print(f"[OK] Will add 4 columns with column W values")
     
-    # Create result dataframe
-    result_df = df[['from', 'to', 'length', 'type_of_cross_section']].copy()
-    
-    # Add specification columns (E-AP)
-    for col in spec_columns:
-        result_df[col] = None
-    
-    # Add placeholder columns (AQ-AR)
-    result_df['AQ_PLACEHOLDER'] = None
-    result_df['AR_PLACEHOLDER'] = None
-    
-    # Add column W value columns (AS-AV)
-    result_df['AS'] = None
-    result_df['AT'] = None
-    result_df['AU'] = None
-    result_df['AV'] = None
-    
-    print(f"[OK] Total output columns: {len(result_df.columns)}")
+    # Create new columns for specifications
+    spec_data = {col: [None] * len(df) for col in spec_columns}
+    spec_data['AQ_PLACEHOLDER'] = [None] * len(df)
+    spec_data['AR_PLACEHOLDER'] = [None] * len(df)
+    spec_data['AS'] = [None] * len(df)
+    spec_data['AT'] = [None] * len(df)
+    spec_data['AU'] = [None] * len(df)
+    spec_data['AV'] = [None] * len(df)
     
     # Fill in specifications
     print(f"\nFilling specifications...")
@@ -247,9 +231,12 @@ def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, outp
     unmatched_types = set()
     type_counts = {}
     
-    for idx, row in result_df.iterrows():
-        cs_type = row['type_of_cross_section']
+    for idx in range(len(df)):
+        cs_type = df.iloc[idx, 3]  # Column D (4th column, index 3)
         
+        if pd.isna(cs_type):
+            continue
+            
         if cs_type not in type_counts:
             type_counts[cs_type] = 0
         type_counts[cs_type] += 1
@@ -268,52 +255,52 @@ def populate_specifications(main_carriageway_file, tcs_dict, column_w_name, outp
         # Fill specification columns
         for col in spec_columns:
             if col in specs:
-                result_df.at[idx, col] = specs[col]
+                spec_data[col][idx] = specs[col]
         
         # Fill column W values to AS, AT, AU, AV
         if 'COLUMN_W_VALUE' in specs:
             w_value = specs['COLUMN_W_VALUE']
-            result_df.at[idx, 'AS'] = w_value
-            result_df.at[idx, 'AT'] = w_value
-            result_df.at[idx, 'AU'] = w_value
-            result_df.at[idx, 'AV'] = w_value
+            spec_data['AS'][idx] = w_value
+            spec_data['AT'][idx] = w_value
+            spec_data['AU'][idx] = w_value
+            spec_data['AV'][idx] = w_value
         
         # Progress indicator
         if (idx + 1) % 200 == 0:
-            print(f"  Processed {idx + 1}/{len(result_df)} rows...")
+            print(f"  Processed {idx + 1}/{len(df)} rows...")
     
-    print(f"\n[OK] Matched specifications for {matched_count}/{len(result_df)} rows")
+    print(f"\n[OK] Matched specifications for {matched_count}/{len(df)} rows")
+    
+    # Add specification columns to dataframe starting from column E (index 4)
+    col_idx = 4  # Start from column E
+    for col_name, col_data in spec_data.items():
+        df[col_idx] = col_data
+        col_idx += 1
     
     # Show summary
     print(f"\nDictionary lookup statistics:")
-    for cs_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True):
+    for cs_type, count in sorted(type_counts.items(), key=lambda x: x[1], reverse=True)[:10]:
         status = "[OK]" if cs_type in tcs_dict or cs_type.lower() in tcs_dict_lower else "[ERROR]"
         print(f"  {status} {cs_type}: {count} rows")
     
     if unmatched_types:
-        print(f"\n[WARNING] WARNING: No specifications found for:")
+        print(f"\n[WARNING] No specifications found for:")
         for cs_type in sorted(unmatched_types):
             print(f"    - {cs_type}")
     
-    # Verify column count
-    expected_total = 4 + len(spec_columns) + 2 + 4  # Core + specs + placeholders + W columns
-    actual_total = len(result_df.columns)
+    print(f"\n[OK] Final column count: {len(df.columns)}")
+    print(f"  Columns A-D: Core data")
+    print(f"  Columns E onwards: {len(spec_data)} specification columns")
     
-    print(f"\n[OK] Column verification:")
-    print(f"  Expected: {expected_total}, Actual: {actual_total}")
-    print(f"  Match: {'[OK] YES' if expected_total == actual_total else '[ERROR] NO'}")
+    # Save to Excel - write to Quantity sheet starting from row 7 (0-indexed row 6)
+    print(f"\n[OK] Writing to {output_file} (Quantity sheet, starting row 7, column A)...")
     
-    # Save to Excel
-    print(f"\n[OK] Saving to {output_file}...")
-    result_df.to_excel(output_file, index=False, sheet_name='Main Carriageway')
+    with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+        df.to_excel(writer, sheet_name='Quantity', startrow=6, startcol=0, index=False, header=False)
     
-    print(f"[OK] Saved! Structure:")
-    print(f"   A-D: 4 core columns")
-    print(f"   E-AP: {len(spec_columns)} specification columns")
-    print(f"   AQ-AR: 2 placeholder columns")
-    print(f"   AS-AV: 4 '{column_w_name}' columns")
+    print(f"[OK] Successfully written {len(df)} rows starting from row 7")
     
-    return result_df
+    return df
 
 
 # ============================================================================
@@ -326,11 +313,12 @@ def main():
     print("TCS SPECIFICATION POPULATOR - EXTENDED VERSION")
     print("Extracts columns D-V and AA-AS from TCS_Input.xlsx")
     print("PLUS column W mapped to Excel columns AS, AT, AU, AV")
+    print("Writes to: output/main_carriageway.xlsx (Quantity sheet, row 7+)")
     print("="*80 + "\n")
     
     try:
         # Step 1: Create TCS dictionary
-        tcs_dict, column_w_name = create_tcs_dictionary(TCS_INPUT_FILE)
+        tcs_dict = create_tcs_dictionary(TCS_INPUT_FILE)
         
         # Save dictionary as JSON for reference
         with open(OUTPUT_JSON, 'w') as f:
@@ -338,56 +326,26 @@ def main():
         print(f"[OK] Saved dictionary to: {OUTPUT_JSON}")
         
         # Step 2: Populate main_carriageway.xlsx
-        df = populate_specifications(MAIN_CARRIAGEWAY_FILE, tcs_dict, column_w_name, OUTPUT_EXCEL)
+        df = populate_specifications(MAIN_CARRIAGEWAY_FILE, tcs_dict, OUTPUT_EXCEL)
         
         # Success summary
         print("\n" + "="*80)
         print("SUCCESS! [OK]")
         print("="*80)
         print(f"Output file: {OUTPUT_EXCEL}")
-        print(f"Total rows: {len(df)}")
+        print(f"Sheet: Quantity")
+        print(f"Starting row: 7")
+        print(f"Total data rows: {len(df)}")
         print(f"Total columns: {len(df.columns)}")
-        print(f"\nColumn layout in Excel:")
-        print(f"  A: from")
-        print(f"  B: to")
-        print(f"  C: length")
-        print(f"  D: type_of_cross_section")
-        print(f"  E-AP: 38 specification columns")
-        print(f"    ├─ E-W: LHS specifications (from TCS_Input D-V)")
-        print(f"    └─ X-AP: RHS specifications (from TCS_Input AA-AS)")
-        print(f"  AQ-AR: 2 placeholder columns (empty)")
-        print(f"  AS-AV: 4 columns containing '{column_w_name}' from TCS_Input column W")
-        
-        # Show sample
-        print(f"\n" + "="*80)
-        print("SAMPLE OUTPUT (first row with data):")
-        print("-"*80)
-        
-        for idx, row in df.iterrows():
-            has_specs = any(pd.notna(row.get(col)) for col in df.columns[4:])
-            
-            if has_specs:
-                print(f"Row {idx + 2} (Excel): {row['from']:.2f} to {row['to']:.2f}")
-                print(f"  Type: {row['type_of_cross_section']}")
-                
-                # Show first few specs
-                spec_cols = [c for c in df.columns[4:-6] if pd.notna(row.get(c))][:5]
-                for col in spec_cols:
-                    print(f"  {col}: {row[col]}")
-                
-                # Show column W values
-                print(f"\n  Column W values (AS-AV):")
-                print(f"    AS ({column_w_name}): {row['AS']}")
-                print(f"    AT ({column_w_name}): {row['AT']}")
-                print(f"    AU ({column_w_name}): {row['AU']}")
-                print(f"    AV ({column_w_name}): {row['AV']}")
-                break
+        print(f"\nColumn layout:")
+        print(f"  A-D: Core columns (from, to, length, type_of_cross_section)")
+        print(f"  E onwards: Specification columns")
         
     except FileNotFoundError as e:
-        print(f"\n[ERROR] ERROR: File not found - {e}")
+        print(f"\n[ERROR] File not found - {e}")
         print("Please check your file paths!")
     except Exception as e:
-        print(f"\n[ERROR] ERROR: {e}")
+        print(f"\n[ERROR] {e}")
         import traceback
         traceback.print_exc()
 

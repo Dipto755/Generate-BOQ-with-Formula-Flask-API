@@ -17,14 +17,18 @@ Generate-BOQ-with-Formula-Flask-API/
 ├── data/                           # Data directory containing Excel files
 │   ├── .~lock.Main Carriageway.xlsx# Excel lock file (temporary)
 │   ├── Emb Height.xlsx            # Embankment height data
-│   ├── Main Carriageway.xlsx       # Main carriageway quantity data
 │   ├── Pavement Input.xlsx        # Pavement input data
 │   ├── TCS Input.xlsx             # TCS (Technical Specifications) input
 │   ├── TCS Schedule.xlsx          # TCS schedule data
 │   └── tcs_specifications.json    # TCS specifications configuration
 │
+├── template/                       # Template directory for cleaned Excel files
+│   └── main_carriageway.xlsx      # Cleaned main carriageway template
+│
 └── src/                           # Source code directory
     ├── __init__.py                # Package initialization
+    ├── main_carriageway_template.py # Excel template cleaning utility
+    ├── sequential.py              # Master orchestration script (replaces run_all.py)
     │
     ├── internal/                  # Internal utilities and core logic
     │   ├── __init__.py           # Internal package initialization
@@ -33,9 +37,9 @@ Generate-BOQ-with-Formula-Flask-API/
     │
     └── processor/                # Data processing modules
         ├── __init__.py           # Processor package initialization
+        ├── constant_fill.py      # Constant value filling processor
         ├── emb_height.py         # Embankment height processing
         ├── pavement_input.py     # Pavement input data processing
-        ├── run_all.py           # Master script to run all processors
         ├── tcs_input.py          # TCS input data processing
         └── tcs_schedule.py       # TCS schedule data processing
 ```
@@ -85,7 +89,30 @@ Generate-BOQ-with-Formula-Flask-API/
 #### Configuration Files
 - **tcs_specifications.json**: Technical specifications configuration
 
+### Template Directory (`template/`)
+
+#### Excel Templates
+- **main_carriageway.xlsx**: Cleaned template file for main carriageway calculations
+
 ### Source Code (`src/`)
+
+#### Root Level Files
+
+##### `main_carriageway_template.py`
+- **Purpose**: Excel template cleaning utility
+- **Functionality**:
+  - Cleans and prepares Excel templates for processing
+  - Removes data while preserving structure and formulas
+  - Unmerges cells and clears content from specified rows
+  - Creates reusable templates from working Excel files
+
+##### `sequential.py`
+- **Purpose**: Master orchestration script (replaces `run_all.py`)
+- **Functionality**:
+  - Executes all processing scripts in correct order
+  - Error handling and reporting
+  - Progress tracking and status reporting
+  - Comprehensive execution summary
 
 #### Internal Module (`src/internal/`)
 
@@ -106,14 +133,8 @@ Generate-BOQ-with-Formula-Flask-API/
 
 #### Processor Module (`src/processor/`)
 
-##### `run_all.py`
-- **Purpose**: Master orchestration script
-- **Functionality**:
-  - Executes all processing scripts in correct order
-  - Error handling and reporting
-  - Progress tracking
-
 ##### Individual Processors
+- **`constant_fill.py`**: Fills specific columns with constant values (e.g., subgrade thickness)
 - **`emb_height.py`**: Processes embankment height calculations
 - **`pavement_input.py`**: Handles pavement quantity calculations
 - **`tcs_input.py`**: Processes technical specification inputs
@@ -122,10 +143,51 @@ Generate-BOQ-with-Formula-Flask-API/
 ## Data Flow
 
 1. **Input**: Excel files with raw data and formulas
-2. **Extraction**: `extractor.py` pulls formulas from Excel → `formula_template.json`
-3. **Processing**: `run_all.py` orchestrates individual processors
-4. **Calculation**: `formula_applier.py` applies formulas to data
-5. **Output**: Generated BOQ with calculated quantities
+2. **Template Preparation**: `main_carriageway_template.py` cleans and prepares Excel templates
+3. **Extraction**: `extractor.py` pulls formulas from Excel → `formula_template.json`
+4. **Processing**: `sequential.py` orchestrates individual processors in correct order
+5. **Calculation**: `formula_applier.py` applies formulas to data
+6. **Recalculation**: `recalc.py` performs final recalculations and validations
+7. **Output**: Generated BOQ with calculated quantities
+
+## Current Issues and Recommendations
+
+### ⚠️ Identified Issues
+
+1. **Missing Main Carriageway Excel File**: 
+   - Expected: `data/Main Carriageway.xlsx`
+   - Status: File not found (only lock file exists)
+   - Impact: `constant_fill.py` processor will fail
+
+2. **File Name Inconsistency**:
+   - `constant_fill.py` references `main_carriageway.xlsx` (lowercase)
+   - Documentation shows `Main Carriageway.xlsx` (title case)
+   - Impact: File path mismatches
+
+3. **Empty main.py**:
+   - File exists but contains 0 bytes
+   - Impact: Flask API application cannot start
+
+### 🔧 Recommended Fixes
+
+1. **Restore Missing Excel File**:
+   ```bash
+   # Copy from template if available, or restore from backup
+   cp template/main_carriageway.xlsx data/Main\ Carriageway.xlsx
+   ```
+
+2. **Standardize File Names**:
+   - Update `constant_fill.py` to use consistent naming
+   - Either use lowercase everywhere or title case everywhere
+
+3. **Implement main.py Flask Application**:
+   - Create basic Flask API structure
+   - Add endpoints for BOQ generation
+   - Integrate with existing processing pipeline
+
+4. **Add Error Handling**:
+   - Add file existence checks in processors
+   - Implement graceful fallbacks for missing files
 
 ## Key Features
 

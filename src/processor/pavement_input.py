@@ -446,6 +446,33 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     if br_value == 0:
         print("[OK] No B24 found in dictionary, BR value = 0")
     
+    # Column BM = IF(BR>0, C22/1000, IF(B9="GSB" OR B9="Geogrid Reinforced GSB", C9/1000, 0))
+    BM_COL_INDEX = 64
+    bm_value = 0
+    
+    # First check: If BR (RHS_PQC) > 0, then use C22/1000
+    if br_value > 0:
+        for key, value in pavement_dict.items():
+            if key.startswith('B22_'):
+                bm_value = value / 1000 if pd.notna(value) and value != 0 else 0
+                print(f"[OK] BR > 0, Found B22 in dictionary: {key} = {value}, BM value = {bm_value}")
+                break
+        if bm_value == 0:
+            print("[OK] BR > 0 but no B22 found in dictionary, BM value = 0")
+    else:
+        # Second check: If BR = 0, check B9 for "GSB" or "Geogrid Reinforced GSB"
+        for key, value in pavement_dict.items():
+            if key.startswith('B9_'):
+                parts = key.split('_')
+                if len(parts) >= 2:
+                    layer_name = parts[1]
+                    if layer_name == "GSB" or layer_name == "Geogrid Reinforced GSB":
+                        bm_value = value / 1000 if pd.notna(value) and value != 0 else 0
+                        print(f"[OK] BR = 0, Found B9 '{layer_name}' in dictionary: {key} = {value}, BM value = {bm_value}")
+                        break
+        if bm_value == 0:
+            print("[OK] BR = 0 and no GSB found in B9, BM value = 0")
+    
     # Column BS = IF B10="RAP" THEN C10/1000 ELSE 0
     BS_COL_INDEX = 70
     bs_value = 0
@@ -526,6 +553,7 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
         (BI_COL_INDEX, bi_value, 'LHS_SDBC_Thickness'),
         (BJ_COL_INDEX, bj_value, 'LHS_BC_Thickness'),
         (BL_COL_INDEX, bl_value, 'RHS_CTSB_Thickness'),
+        (BM_COL_INDEX, bm_value, 'RHS_GSB_Thickness'),
         (BN_COL_INDEX, bn_value, 'RHS_CTB_Thickness'),
         (BO_COL_INDEX, bo_value, 'RHS_WMM_Thickness'),
         (BP_COL_INDEX, bp_value, 'RHS_AIL_Thickness'),

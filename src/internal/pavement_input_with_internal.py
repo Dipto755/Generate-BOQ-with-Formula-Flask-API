@@ -21,10 +21,10 @@ root_dir = os.path.join(script_dir, '..', '..')
 
 # Input files
 PAVEMENT_INPUT_FILE = os.path.join(root_dir, 'data', 'Pavement Input.xlsx')
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 # Output file
-OUTPUT_EXCEL = os.path.join(root_dir, 'data', 'main_carriageway.xlsx')
+OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 
 # ============================================================================
@@ -121,7 +121,9 @@ def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
     print("="*80)
     
     # Read the main carriageway file
-    df = pd.read_excel(main_carriageway_file)
+    # NEW CODE
+    df = pd.read_excel(main_carriageway_file, sheet_name='Quantity', skiprows=6, header=None)
+    df = df.dropna(how='all')  # Remove empty rows
     print("[OK] Read main_carriageway.xlsx:", len(df), "rows")
     print("  Current columns:", len(df.columns))
     
@@ -142,6 +144,7 @@ def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
     LB_COL_INDEX = 313  # Column LB
     
     # Initialize geogrid columns
+    # NEW CODE
     for col_idx, col_name in [
         (KY_COL_INDEX, 'LHS_MC_Geogrid'),
         (KZ_COL_INDEX, 'RHS_MC_Geogrid'),
@@ -151,10 +154,9 @@ def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
         if len(df.columns) <= col_idx:
             while len(df.columns) < col_idx:
                 df[f'Empty_{len(df.columns)}'] = None
-            df.insert(col_idx, col_name, 0)
+            df.insert(col_idx, f'Col_{col_idx}', 0)  # Simple column name
         else:
             df.iloc[:, col_idx] = 0
-            df.columns.values[col_idx] = col_name
         print(f"[OK] Column {col_name} (index {col_idx}) initialized")
     
     # Calculate values for each row
@@ -199,8 +201,10 @@ def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
     print(f"[OK] Geogrid calculations completed for all rows")
     
     # Save to Excel
+    # NEW CODE
     print(f"\n[OK] Saving to {output_file}...")
-    df.to_excel(output_file, index=False, sheet_name='Main Carriageway')
+    with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
+        df.to_excel(writer, sheet_name='Quantity', startrow=6, startcol=0, index=False, header=False)
     
     print("[OK] Saved!")
     print(f"  Total columns: {len(df.columns)}")
@@ -242,7 +246,7 @@ def main():
         print("SAMPLE OUTPUT (first 3 rows):")
         print("-"*80)
         for idx in range(min(3, len(df))):
-            print(f"\nRow {idx + 2}:")
+            print(f"\nRow {idx + 7}:")  # Adjusted for skiprows=6
             print(f"  Length: {df.iloc[idx, 2]}")
             print(f"  KY (LHS_MC_Geogrid): {df.iloc[idx, 286]}")
             print(f"  KZ (RHS_MC_Geogrid): {df.iloc[idx, 287]}")

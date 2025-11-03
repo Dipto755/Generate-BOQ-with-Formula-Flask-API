@@ -15,7 +15,8 @@ SCRIPTS = [
     ('tcs_schedule.py', 'TCS Schedule Processing'),
     ('tcs_input.py', 'TCS Input Processing'),
     ('emb_height.py', 'Embankment Height Processing'),
-    ('pavement_input.py', 'Pavement Input Processing')
+    ('pavement_input.py', 'Pavement Input Processing'),
+    ('constant_fill.py', 'Constant Fill Processing')
 ]
 
 def run_script(script_name, description):

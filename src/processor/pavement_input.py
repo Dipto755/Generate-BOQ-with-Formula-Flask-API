@@ -152,6 +152,42 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
         print("[OK] No CTB found in dictionary")
         print("  Column AZ value will be: 0")
 
+    # Column BA = Complex WMM formula
+    # IF E10="WMM" OR E10="Geogrid Reinforced WMM" THEN F10/1000
+    # ELSE IF E11="WMM" THEN F11/1000
+    # ELSE 0
+    BA_COL_INDEX = 52
+    ba_value = 0
+    ba_found = False
+    
+    # First check: E10 for "WMM" or "Geogrid Reinforced WMM"
+    for key, value in pavement_dict.items():
+        if key.startswith('E10_'):
+            parts = key.split('_')
+            if len(parts) >= 2:
+                layer_name = parts[1]
+                # Check if layer_name is exactly "WMM" or contains "Geogrid Reinforced WMM"
+                if layer_name == "WMM" or layer_name == "Geogrid Reinforced WMM":
+                    ba_value = value / 1000 if pd.notna(value) and value != 0 else 0
+                    print(f"✓ Found E10 '{layer_name}' in dictionary: {key} = {value}, BA value = {ba_value}")
+                    ba_found = True
+                    break
+    
+    # Second check: If not found in E10, check E11 for "WMM"
+    if not ba_found:
+        for key, value in pavement_dict.items():
+            if key.startswith('E11_'):
+                parts = key.split('_')
+                if len(parts) >= 2:
+                    layer_name = parts[1]
+                    if layer_name == "WMM":
+                        ba_value = value / 1000 if pd.notna(value) and value != 0 else 0
+                        print(f"✓ Found E11 'WMM' in dictionary: {key} = {value}, BA value = {ba_value}")
+                        ba_found = True
+                        break
+    
+    if not ba_found:
+        print("✓ No WMM found in E10 or E11, BA value = 0")
         
     # Column BB = F11/1000 (Check E11 keys, as E column has F values)
     BB_COL_INDEX = 53
@@ -220,6 +256,7 @@ def populate_columns(main_carriageway_file, pavement_dict, output_file):
     
     # Set columns BB, BC, BD
     for col_idx, col_value, col_name in [
+        (BA_COL_INDEX, ba_value, 'LHS_WMM_Thickness'),
         (BB_COL_INDEX, bb_value, 'LHS_AIL_Thickness'),
         (BC_COL_INDEX, bc_value, 'LHS_DLC_Thickness'),
         (BD_COL_INDEX, bd_value, 'LHS_PQC_Thickness')

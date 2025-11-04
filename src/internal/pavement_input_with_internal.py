@@ -106,6 +106,29 @@ def check_geogrid_conditions(pavement_input_file):
 # STEP 2: Calculate Geogrid Columns
 # ============================================================================
 
+def find_last_row_with_data(ws, column_letter):
+    """
+    Find the last row with data in the specified column
+    Args:
+        ws: Worksheet object
+        column_letter: Excel column letter (e.g., 'D')
+    Returns:
+        Last row number that contains data
+    """
+    from openpyxl.utils import column_index_from_string
+    
+    col_idx = column_index_from_string(column_letter)
+    last_row = 0
+    
+    # Iterate from bottom to top to find last non-empty cell
+    for row_idx in range(ws.max_row, 0, -1):
+        cell_value = ws.cell(row_idx, col_idx).value
+        if cell_value is not None and cell_value != '':
+            last_row = row_idx
+            break
+    
+    return last_row
+
 def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
     """
     Reads main_carriageway.xlsx and calculates geogrid columns based on conditions
@@ -124,6 +147,14 @@ def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
     print(f"[OK] Loaded workbook: {main_carriageway_file}")
     print("  Sheet: Quantity")
     print(f"  Max row: {ws.max_row}, Max column: {ws.max_column}")
+    
+    # Find last row with data using column D as reference
+    last_row_with_data = find_last_row_with_data(ws, 'D')
+    print(f"[OK] Last row with data in column D: {last_row_with_data}")
+    
+    if last_row_with_data == 0:
+        print("[WARNING] No data found in column D, using max_row instead")
+        last_row_with_data = ws.max_row
     
     # Column letters (Excel columns, 1-indexed)
     LENGTH_COL = 3      # Column C
@@ -144,13 +175,17 @@ def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
     # Data starts from row 7
     start_row = 7
     
-    print(f"\n[OK] Calculating geogrid values from row {start_row}...")
+    print(f"\n[OK] Calculating geogrid values from row {start_row} to row {last_row_with_data}...")
     
     row_count = 0
-    for row_idx in range(start_row, ws.max_row + 1):
+    for row_idx in range(start_row, last_row_with_data + 1):
         # Get length value
         length_cell = ws.cell(row_idx, LENGTH_COL)
         length = length_cell.value if length_cell.value is not None else 0
+        
+        # Skip empty rows (if length column is empty, skip this row)
+        if length == 0 or length is None or length == '':
+            continue
         
         # Get column values
         dl_val = ws.cell(row_idx, DL_COL).value or 0

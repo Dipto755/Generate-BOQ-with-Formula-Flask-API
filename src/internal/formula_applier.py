@@ -1,6 +1,10 @@
 import json
 from pathlib import Path
 from openpyxl import load_workbook
+import sys
+import io
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 class FormulaApplier:
     """Apply formula templates to output/main_carriageway.xlsx by replacing {row} placeholders."""

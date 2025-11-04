@@ -93,7 +93,7 @@ def check_geogrid_conditions(pavement_input_file):
         else:
             print(f"[OK] B10 value: {b10_value} (not Geogrid Reinforced WMM)")
     
-    print(f"\n[OK] Geogrid Conditions Summary:")
+    print("\n[OK] Geogrid Conditions Summary:")
     print(f"  E9 Geogrid GSB: {conditions['e9_geogrid_gsb']}")
     print(f"  E10 Geogrid WMM: {conditions['e10_geogrid_wmm']}")
     print(f"  B9 Geogrid GSB: {conditions['b9_geogrid_gsb']}")
@@ -109,107 +109,94 @@ def check_geogrid_conditions(pavement_input_file):
 def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
     """
     Reads main_carriageway.xlsx and calculates geogrid columns based on conditions
-    
-    Formulas:
-    KY = (IF(E9=Geogrid GSB, DL, 0) + IF(E10=Geogrid WMM, DS, 0)) * LENGTH
-    KZ = (IF(B9=Geogrid GSB, EE, 0) + IF(B10=Geogrid WMM, EJ, 0)) * LENGTH
-    LA = (IF(B9=Geogrid GSB, FF, 0) + IF(B10=Geogrid WMM, FD, 0)) * LENGTH
-    LB = (IF(E9=Geogrid GSB, FY, 0) + IF(E10=Geogrid WMM, FS, 0)) * LENGTH
+    Updates only columns KY, KZ, LA, LB without touching other columns
     """
     print("\n" + "="*80)
     print("STEP 2: Calculating Geogrid Columns")
     print("="*80)
     
-    # Read the main carriageway file
-    # NEW CODE
-    df = pd.read_excel(main_carriageway_file, sheet_name='Quantity', skiprows=6, header=None)
-    df = df.dropna(how='all')  # Remove empty rows
-    print("[OK] Read main_carriageway.xlsx:", len(df), "rows")
-    print("  Current columns:", len(df.columns))
+    from openpyxl import load_workbook
     
-    # Column indexes
-    LENGTH_COL = 2  # Column C
-    DL_COL = 115    # Column DL
-    DS_COL = 122    # Column DS
-    EE_COL = 134    # Column EE
-    EJ_COL = 139    # Column EJ
-    FD_COL = 159    # Column FD
-    FF_COL = 161    # Column FF
-    FS_COL = 174    # Column FS
-    FY_COL = 180    # Column FY
+    # Load workbook
+    wb = load_workbook(main_carriageway_file)
+    ws = wb['Quantity']
     
-    KY_COL_INDEX = 310  # Column KY
-    KZ_COL_INDEX = 311  # Column KZ
-    LA_COL_INDEX = 312  # Column LA
-    LB_COL_INDEX = 313  # Column LB
+    print(f"[OK] Loaded workbook: {main_carriageway_file}")
+    print("  Sheet: Quantity")
+    print(f"  Max row: {ws.max_row}, Max column: {ws.max_column}")
     
-    # Initialize geogrid columns
-    # NEW CODE
-    for col_idx, col_name in [
-        (KY_COL_INDEX, 'LHS_MC_Geogrid'),
-        (KZ_COL_INDEX, 'RHS_MC_Geogrid'),
-        (LA_COL_INDEX, 'SR_LHS_Geogrid'),
-        (LB_COL_INDEX, 'SR_RHS_Geogrid')
-    ]:
-        if len(df.columns) <= col_idx:
-            while len(df.columns) < col_idx:
-                df[f'Empty_{len(df.columns)}'] = None
-            df.insert(col_idx, f'Col_{col_idx}', 0)  # Simple column name
-        else:
-            df.iloc[:, col_idx] = 0
-        print(f"[OK] Column {col_name} (index {col_idx}) initialized")
+    # Column letters (Excel columns, 1-indexed)
+    LENGTH_COL = 3      # Column C
+    DL_COL = 116        # Column DL
+    DS_COL = 123        # Column DS
+    EE_COL = 135        # Column EE
+    EJ_COL = 140        # Column EJ
+    FD_COL = 160        # Column FD
+    FF_COL = 162        # Column FF
+    FS_COL = 175        # Column FS
+    FY_COL = 181        # Column FY
     
-    # Calculate values for each row
-    print(f"\n[OK] Calculating geogrid values for {len(df)} rows...")
+    KY_COL = 311        # Column KY
+    KZ_COL = 312        # Column KZ
+    LA_COL = 313        # Column LA
+    LB_COL = 314        # Column LB
     
-    for idx in range(len(df)):
+    # Data starts from row 7
+    start_row = 7
+    
+    print(f"\n[OK] Calculating geogrid values from row {start_row}...")
+    
+    row_count = 0
+    for row_idx in range(start_row, ws.max_row + 1):
         # Get length value
-        length = df.iloc[idx, LENGTH_COL] if pd.notna(df.iloc[idx, LENGTH_COL]) else 0
+        length_cell = ws.cell(row_idx, LENGTH_COL)
+        length = length_cell.value if length_cell.value is not None else 0
         
-        # KY = (IF E9=Geogrid GSB THEN DL ELSE 0 + IF E10=Geogrid WMM THEN DS ELSE 0) * length
-        dl_val = df.iloc[idx, DL_COL] if len(df.columns) > DL_COL and pd.notna(df.iloc[idx, DL_COL]) else 0
-        ds_val = df.iloc[idx, DS_COL] if len(df.columns) > DS_COL and pd.notna(df.iloc[idx, DS_COL]) else 0
+        # Get column values
+        dl_val = ws.cell(row_idx, DL_COL).value or 0
+        ds_val = ws.cell(row_idx, DS_COL).value or 0
+        ee_val = ws.cell(row_idx, EE_COL).value or 0
+        ej_val = ws.cell(row_idx, EJ_COL).value or 0
+        ff_val = ws.cell(row_idx, FF_COL).value or 0
+        fd_val = ws.cell(row_idx, FD_COL).value or 0
+        fy_val = ws.cell(row_idx, FY_COL).value or 0
+        fs_val = ws.cell(row_idx, FS_COL).value or 0
+        
+        # Calculate KY
         ky_val = ((dl_val if conditions['e9_geogrid_gsb'] else 0) + 
                   (ds_val if conditions['e10_geogrid_wmm'] else 0)) * length
-        df.iloc[idx, KY_COL_INDEX] = ky_val
+        ws.cell(row_idx, KY_COL).value = ky_val
         
-        # KZ = (IF B9=Geogrid GSB THEN EE ELSE 0 + IF B10=Geogrid WMM THEN EJ ELSE 0) * length
-        ee_val = df.iloc[idx, EE_COL] if len(df.columns) > EE_COL and pd.notna(df.iloc[idx, EE_COL]) else 0
-        ej_val = df.iloc[idx, EJ_COL] if len(df.columns) > EJ_COL and pd.notna(df.iloc[idx, EJ_COL]) else 0
+        # Calculate KZ
         kz_val = ((ee_val if conditions['b9_geogrid_gsb'] else 0) + 
                   (ej_val if conditions['b10_geogrid_wmm'] else 0)) * length
-        df.iloc[idx, KZ_COL_INDEX] = kz_val
+        ws.cell(row_idx, KZ_COL).value = kz_val
         
-        # LA = (IF B9=Geogrid GSB THEN FF ELSE 0 + IF B10=Geogrid WMM THEN FD ELSE 0) * length
-        ff_val = df.iloc[idx, FF_COL] if len(df.columns) > FF_COL and pd.notna(df.iloc[idx, FF_COL]) else 0
-        fd_val = df.iloc[idx, FD_COL] if len(df.columns) > FD_COL and pd.notna(df.iloc[idx, FD_COL]) else 0
+        # Calculate LA
         la_val = ((ff_val if conditions['b9_geogrid_gsb'] else 0) + 
                   (fd_val if conditions['b10_geogrid_wmm'] else 0)) * length
-        df.iloc[idx, LA_COL_INDEX] = la_val
+        ws.cell(row_idx, LA_COL).value = la_val
         
-        # LB = (IF E9=Geogrid GSB THEN FY ELSE 0 + IF E10=Geogrid WMM THEN FS ELSE 0) * length
-        fy_val = df.iloc[idx, FY_COL] if len(df.columns) > FY_COL and pd.notna(df.iloc[idx, FY_COL]) else 0
-        fs_val = df.iloc[idx, FS_COL] if len(df.columns) > FS_COL and pd.notna(df.iloc[idx, FS_COL]) else 0
+        # Calculate LB
         lb_val = ((fy_val if conditions['e9_geogrid_gsb'] else 0) + 
                   (fs_val if conditions['e10_geogrid_wmm'] else 0)) * length
-        df.iloc[idx, LB_COL_INDEX] = lb_val
+        ws.cell(row_idx, LB_COL).value = lb_val
+        
+        row_count += 1
         
         # Progress indicator
-        if (idx + 1) % 200 == 0:
-            print(f"  Processed {idx + 1}/{len(df)} rows...")
+        if row_count % 200 == 0:
+            print(f"  Processed {row_count} rows...")
     
-    print(f"[OK] Geogrid calculations completed for all rows")
+    print(f"[OK] Geogrid calculations completed for {row_count} rows")
     
-    # Save to Excel
-    # NEW CODE
+    # Save workbook
     print(f"\n[OK] Saving to {output_file}...")
-    with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
-        df.to_excel(writer, sheet_name='Quantity', startrow=6, startcol=0, index=False, header=False)
+    wb.save(output_file)
     
     print("[OK] Saved!")
-    print(f"  Total columns: {len(df.columns)}")
     
-    return df
+    return row_count
 
 
 # ============================================================================
@@ -231,27 +218,15 @@ def main():
         conditions = check_geogrid_conditions(PAVEMENT_INPUT_FILE)
         
         # Step 2: Calculate geogrid columns
-        df = calculate_geogrid_columns(MAIN_CARRIAGEWAY_FILE, conditions, OUTPUT_EXCEL)
+        row_count = calculate_geogrid_columns(MAIN_CARRIAGEWAY_FILE, conditions, OUTPUT_EXCEL)
         
         # Success summary
         print("\n" + "="*80)
         print("SUCCESS! [OK]")
         print("="*80)
         print("Output file:", OUTPUT_EXCEL)
-        print("Total rows:", len(df))
-        print("Total columns:", len(df.columns))
-        
-        # Show sample output
-        print("\n" + "="*80)
-        print("SAMPLE OUTPUT (first 3 rows):")
-        print("-"*80)
-        for idx in range(min(3, len(df))):
-            print(f"\nRow {idx + 7}:")  # Adjusted for skiprows=6
-            print(f"  Length: {df.iloc[idx, 2]}")
-            print(f"  KY (LHS_MC_Geogrid): {df.iloc[idx, 286]}")
-            print(f"  KZ (RHS_MC_Geogrid): {df.iloc[idx, 287]}")
-            print(f"  LA (SR_LHS_Geogrid): {df.iloc[idx, 288]}")
-            print(f"  LB (SR_RHS_Geogrid): {df.iloc[idx, 289]}")
+        print("Total rows processed:", row_count)
+        print("Columns updated: KY, KZ, LA, LB")
         
     except FileNotFoundError as e:
         print("\n[ERROR] File not found")

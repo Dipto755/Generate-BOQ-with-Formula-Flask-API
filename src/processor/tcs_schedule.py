@@ -4,12 +4,9 @@ import sys
 import io
 import shutil
 
-if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 def main(session_id=None):
     """Main function to execute TCS schedule processing"""
-    import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
     from api.session_manager import session_manager
     

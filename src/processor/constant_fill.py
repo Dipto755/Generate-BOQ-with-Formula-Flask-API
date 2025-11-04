@@ -9,8 +9,6 @@ import os
 import sys
 import io
 import time
-if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 def wait_for_file_ready(file_path, max_wait_seconds=15):
     """Wait for file to be ready for access"""
@@ -45,6 +43,7 @@ def safe_workbook_operation(file_path, operation_func, max_retries=5):
     from openpyxl import load_workbook
     
     for attempt in range(max_retries):
+        wb = None
         try:
             # Wait for file to be ready
             if not wait_for_file_ready(file_path, max_wait_seconds=10):
@@ -52,21 +51,26 @@ def safe_workbook_operation(file_path, operation_func, max_retries=5):
             
             print(f"[INFO] Attempting workbook operation (attempt {attempt + 1}/{max_retries})")
             
+            # Load workbook
             wb = load_workbook(file_path)
             result = operation_func(wb)
             
-            # Save and close with additional delay
+            # Save workbook
             wb.save(file_path)
-            wb.close()
-            
-            # Wait longer after save to ensure file system completion
-            time.sleep(2.0)
             
             print(f"[OK] Workbook operation completed successfully")
             return result
             
         except Exception as e:
             print(f"[WARNING] Attempt {attempt + 1} failed: {e}")
+            
+            # Ensure workbook is closed even on error
+            if wb:
+                try:
+                    wb.close()
+                except:
+                    pass
+            
             if attempt == max_retries - 1:
                 print(f"[ERROR] All attempts failed for {os.path.basename(file_path)}")
                 raise e
@@ -75,6 +79,17 @@ def safe_workbook_operation(file_path, operation_func, max_retries=5):
             wait_time = (2 ** attempt) * 0.5 + (attempt * 0.1)
             print(f"[INFO] Waiting {wait_time:.1f}s before retry...")
             time.sleep(wait_time)
+        
+        finally:
+            # Always close workbook
+            if wb:
+                try:
+                    wb.close()
+                except:
+                    pass
+            
+            # Wait after operation completion
+            time.sleep(1.0)
 
 def main(session_id=None):
     """Main function to execute constant fill processing"""

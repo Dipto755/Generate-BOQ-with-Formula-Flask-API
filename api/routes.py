@@ -183,6 +183,13 @@ def upload_files(session_id):
 @bp.route('/execute-calculation', methods=['POST'])
 def execute_scripts():
     """Execute all scripts in src/processors and src/internal directories"""
+    import sys
+    from io import StringIO
+    import logging
+    
+    # Create a string buffer to capture output
+    output_buffer = StringIO()
+    
     try:
         # Get session_id from request payload
         data = request.get_json()
@@ -215,11 +222,18 @@ def execute_scripts():
         # Update session status
         session_manager.update_session_status(session_id, "executing")
         
-        # Execute processor scripts in specified order
+        # Add delay between script executions
+        import time
+        
+        # Redirect stdout to buffer to avoid I/O closed errors
+        old_stdout = sys.stdout
+        sys.stdout = output_buffer
+        
+        # Execute processor scripts in specified order with delays
         processor_results = []
         processor_scripts = [
             'src.processor.tcs_schedule',
-            'src.processor.tcs_input',
+            'src.processor.tcs_input', 
             'src.processor.emb_height',
             'src.processor.pavement_input',
             'src.processor.constant_fill'
@@ -227,25 +241,25 @@ def execute_scripts():
         
         for script_name in processor_scripts:
             try:
+                # Add delay between scripts
+                time.sleep(1.0)
+                
                 module = __import__(script_name, fromlist=[''])
-                if hasattr(module, 'main') or hasattr(module, 'process'):
-                    result = {
+                if hasattr(module, 'main') and callable(getattr(module, 'main')):
+                    output_buffer.write(f"Executing {script_name}...\n")
+                    module.main(session_id)
+                    processor_results.append({
                         "script": script_name,
                         "status": "executed",
                         "message": "Script executed successfully"
-                    }
-                    # Call main or process function if available with session_id
-                    if hasattr(module, 'main') and callable(getattr(module, 'main')):
-                        module.main(session_id)
-                    elif hasattr(module, 'process') and callable(getattr(module, 'process')):
-                        module.process(session_id)
-                    processor_results.append(result)
+                    })
                 else:
                     processor_results.append({
                         "script": script_name,
-                        "status": "skipped",
-                        "message": "No main or process function found"
+                        "status": "skipped", 
+                        "message": "No main function found"
                     })
+                    
             except Exception as e:
                 processor_results.append({
                     "script": script_name,
@@ -253,36 +267,40 @@ def execute_scripts():
                     "error": str(e),
                     "message": "Script execution failed"
                 })
+                output_buffer.write(f"Error in {script_name}: {e}\n")
         
-        # Execute internal scripts in specified order (excluding recalc)
+        # Longer delay before internal scripts
+        time.sleep(2.0)
+        
+        # Execute internal scripts in specified order with delays
         internal_results = []
         internal_scripts = [
             'src.internal.formula_applier',
-            'src.internal.pavement_input_with_internal',
+            'src.internal.pavement_input_with_internal', 
             'src.internal.final_sum_applier'
         ]
         
         for script_name in internal_scripts:
             try:
+                # Add delay between scripts
+                time.sleep(1.0)
+                
                 module = __import__(script_name, fromlist=[''])
-                if hasattr(module, 'main') or hasattr(module, 'process'):
-                    result = {
+                if hasattr(module, 'main') and callable(getattr(module, 'main')):
+                    output_buffer.write(f"Executing {script_name}...\n")
+                    module.main(session_id)
+                    internal_results.append({
                         "script": script_name,
                         "status": "executed",
                         "message": "Script executed successfully"
-                    }
-                    # Call main or process function if available
-                    if hasattr(module, 'main') and callable(getattr(module, 'main')):
-                        module.main(session_id)
-                    elif hasattr(module, 'process') and callable(getattr(module, 'process')):
-                        module.process(session_id)
-                    internal_results.append(result)
+                    })
                 else:
                     internal_results.append({
                         "script": script_name,
                         "status": "skipped",
-                        "message": "No main or process function found"
+                        "message": "No main function found"
                     })
+                    
             except Exception as e:
                 internal_results.append({
                     "script": script_name,
@@ -290,21 +308,40 @@ def execute_scripts():
                     "error": str(e),
                     "message": "Script execution failed"
                 })
+                output_buffer.write(f"Error in {script_name}: {e}\n")
+        
+        # Restore stdout
+        sys.stdout = old_stdout
         
         # Update session status
         session_manager.update_session_status(session_id, "completed")
+        
+        # Get captured output
+        captured_output = output_buffer.getvalue()
+        output_buffer.close()
         
         return jsonify({
             "success": True,
             "session_id": session_id,
             "processor_results": processor_results,
             "internal_results": internal_results,
+            "log_output": captured_output,  # Include logs in response
             "message": "Script execution completed"
         }), 200
         
     except Exception as e:
+        # Restore stdout if it was redirected
+        if 'old_stdout' in locals():
+            sys.stdout = old_stdout
+        
+        # Close buffer if it exists
+        if 'output_buffer' in locals():
+            output_buffer.close()
+            
         # Update session status to error
-        session_manager.update_session_status(session_id, "error")
+        if 'session_id' in locals():
+            session_manager.update_session_status(session_id, "error")
+            
         return jsonify({
             "success": False,
             "error": str(e),

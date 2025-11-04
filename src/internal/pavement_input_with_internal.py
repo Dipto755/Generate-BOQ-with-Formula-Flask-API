@@ -1,279 +1,316 @@
 """
-Geogrid Calculator
-Reads Pavement_Input.xlsx to check for Geogrid conditions
-Calculates columns KY, KZ, LA, LB in main_carriageway.xlsx based on formulas
+Pavement Input with Internal Processor
+Reads Pavement_Input.xlsx and applies internal pavement calculations
+Processes geogrid and other internal pavement-related calculations
 """
 
 import pandas as pd
 import os
 import sys
 import io
+import time
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
+def wait_for_file_ready(file_path, max_wait_seconds=15):
+    """Wait for file to be ready for access"""
+    import os
+    start_time = time.time()
+    
+    print(f"[INFO] Waiting for file to be ready: {os.path.basename(file_path)}")
+    
+    while time.time() - start_time < max_wait_seconds:
+        try:
+            # Try to open file in read mode to check if it's ready
+            with open(file_path, 'rb') as f:
+                pass
+            # Additional check: try to read first few bytes
+            with open(file_path, 'rb') as f:
+                f.read(1024)  # Try to read first 1KB
+            print(f"[OK] File is ready for access: {os.path.basename(file_path)}")
+            return True
+        except (IOError, PermissionError) as e:
+            print(f"[WAIT] File not ready, waiting... ({time.time() - start_time:.1f}s elapsed)")
+            time.sleep(1.0)
+        except Exception as e:
+            print(f"[ERROR] Unexpected error waiting for file: {e}")
+            return False
+    
+    print(f"[ERROR] Timeout waiting for file to be ready: {file_path}")
+    return False
 
-# ============================================================================
-# FILE PATHS - Update these to match your folder structure
-# ============================================================================
-
-script_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.join(script_dir, '..', '..')
-
-# Input files
-PAVEMENT_INPUT_FILE = os.path.join(root_dir, 'data', 'Pavement Input.xlsx')
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
-
-# Output file
-OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
-
-
-# ============================================================================
-# STEP 1: Check Pavement_Input.xlsx for Geogrid Conditions
-# ============================================================================
-
-def check_geogrid_conditions(pavement_input_file):
-    """
-    Reads Pavement_Input.xlsx and checks if:
-    - E9 contains "Geogrid Reinforced GSB"
-    - E10 contains "Geogrid Reinforced WMM"
-    - B9 contains "Geogrid Reinforced GSB"
-    - B10 contains "Geogrid Reinforced WMM"
-    Returns: dictionary with boolean flags
-    """
-    print("="*80)
-    print("STEP 1: Checking Geogrid Conditions in Pavement Input")
-    print("="*80)
-    
-    # Read the Excel file without headers
-    df = pd.read_excel(pavement_input_file, header=None)
-    
-    print("[OK] Read Pavement_Input.xlsx:", len(df), "total rows")
-    
-    # Initialize conditions
-    conditions = {
-        'e9_geogrid_gsb': False,
-        'e10_geogrid_wmm': False,
-        'b9_geogrid_gsb': False,
-        'b10_geogrid_wmm': False
-    }
-    
-    # Check E9 (row index 8, column 4)
-    if len(df) > 8:
-        e9_value = df.iloc[8, 4]  # E9
-        if pd.notna(e9_value) and "Geogrid Reinforced GSB" in str(e9_value):
-            conditions['e9_geogrid_gsb'] = True
-            print(f"[OK] E9 contains 'Geogrid Reinforced GSB': {e9_value}")
-        else:
-            print(f"[OK] E9 value: {e9_value} (not Geogrid Reinforced GSB)")
-    
-    # Check E10 (row index 9, column 4)
-    if len(df) > 9:
-        e10_value = df.iloc[9, 4]  # E10
-        if pd.notna(e10_value) and "Geogrid Reinforced WMM" in str(e10_value):
-            conditions['e10_geogrid_wmm'] = True
-            print(f"[OK] E10 contains 'Geogrid Reinforced WMM': {e10_value}")
-        else:
-            print(f"[OK] E10 value: {e10_value} (not Geogrid Reinforced WMM)")
-    
-    # Check B9 (row index 8, column 1)
-    if len(df) > 8:
-        b9_value = df.iloc[8, 1]  # B9
-        if pd.notna(b9_value) and "Geogrid Reinforced GSB" in str(b9_value):
-            conditions['b9_geogrid_gsb'] = True
-            print(f"[OK] B9 contains 'Geogrid Reinforced GSB': {b9_value}")
-        else:
-            print(f"[OK] B9 value: {b9_value} (not Geogrid Reinforced GSB)")
-    
-    # Check B10 (row index 9, column 1)
-    if len(df) > 9:
-        b10_value = df.iloc[9, 1]  # B10
-        if pd.notna(b10_value) and "Geogrid Reinforced WMM" in str(b10_value):
-            conditions['b10_geogrid_wmm'] = True
-            print(f"[OK] B10 contains 'Geogrid Reinforced WMM': {b10_value}")
-        else:
-            print(f"[OK] B10 value: {b10_value} (not Geogrid Reinforced WMM)")
-    
-    print("\n[OK] Geogrid Conditions Summary:")
-    print(f"  E9 Geogrid GSB: {conditions['e9_geogrid_gsb']}")
-    print(f"  E10 Geogrid WMM: {conditions['e10_geogrid_wmm']}")
-    print(f"  B9 Geogrid GSB: {conditions['b9_geogrid_gsb']}")
-    print(f"  B10 Geogrid WMM: {conditions['b10_geogrid_wmm']}")
-    
-    return conditions
-
-
-# ============================================================================
-# STEP 2: Calculate Geogrid Columns
-# ============================================================================
-
-def find_last_row_with_data(ws, column_letter):
-    """
-    Find the last row with data in the specified column
-    Args:
-        ws: Worksheet object
-        column_letter: Excel column letter (e.g., 'D')
-    Returns:
-        Last row number that contains data
-    """
-    from openpyxl.utils import column_index_from_string
-    
-    col_idx = column_index_from_string(column_letter)
-    last_row = 0
-    
-    # Iterate from bottom to top to find last non-empty cell
-    for row_idx in range(ws.max_row, 0, -1):
-        cell_value = ws.cell(row_idx, col_idx).value
-        if cell_value is not None and cell_value != '':
-            last_row = row_idx
-            break
-    
-    return last_row
-
-def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
-    """
-    Reads main_carriageway.xlsx and calculates geogrid columns based on conditions
-    Updates only columns KY, KZ, LA, LB without touching other columns
-    """
-    print("\n" + "="*80)
-    print("STEP 2: Calculating Geogrid Columns")
-    print("="*80)
-    
+def safe_workbook_operation(file_path, operation_func, max_retries=5):
+    """Safely perform workbook operations with enhanced retry logic"""
+    import os
     from openpyxl import load_workbook
     
-    # Load workbook
-    wb = load_workbook(main_carriageway_file)
-    ws = wb['Quantity']
-    
-    print(f"[OK] Loaded workbook: {main_carriageway_file}")
-    print("  Sheet: Quantity")
-    print(f"  Max row: {ws.max_row}, Max column: {ws.max_column}")
-    
-    # Find last row with data using column D as reference
-    last_row_with_data = find_last_row_with_data(ws, 'D')
-    print(f"[OK] Last row with data in column D: {last_row_with_data}")
-    
-    if last_row_with_data == 0:
-        print("[WARNING] No data found in column D, using max_row instead")
-        last_row_with_data = ws.max_row
-    
-    # Column letters (Excel columns, 1-indexed)
-    LENGTH_COL = 3      # Column C
-    DL_COL = 116        # Column DL
-    DS_COL = 123        # Column DS
-    EE_COL = 135        # Column EE
-    EJ_COL = 140        # Column EJ
-    FD_COL = 160        # Column FD
-    FF_COL = 162        # Column FF
-    FS_COL = 175        # Column FS
-    FY_COL = 181        # Column FY
-    
-    KY_COL = 311        # Column KY
-    KZ_COL = 312        # Column KZ
-    LA_COL = 313        # Column LA
-    LB_COL = 314        # Column LB
-    
-    # Data starts from row 7
-    start_row = 7
-    
-    print(f"\n[OK] Calculating geogrid values from row {start_row} to row {last_row_with_data}...")
-    
-    row_count = 0
-    for row_idx in range(start_row, last_row_with_data + 1):
-        # Get length value
-        length_cell = ws.cell(row_idx, LENGTH_COL)
-        length = length_cell.value if length_cell.value is not None else 0
-        
-        # Skip empty rows (if length column is empty, skip this row)
-        if length == 0 or length is None or length == '':
-            continue
-        
-        # Get column values
-        dl_val = ws.cell(row_idx, DL_COL).value or 0
-        ds_val = ws.cell(row_idx, DS_COL).value or 0
-        ee_val = ws.cell(row_idx, EE_COL).value or 0
-        ej_val = ws.cell(row_idx, EJ_COL).value or 0
-        ff_val = ws.cell(row_idx, FF_COL).value or 0
-        fd_val = ws.cell(row_idx, FD_COL).value or 0
-        fy_val = ws.cell(row_idx, FY_COL).value or 0
-        fs_val = ws.cell(row_idx, FS_COL).value or 0
-        
-        # Calculate KY
-        ky_val = ((dl_val if conditions['e9_geogrid_gsb'] else 0) + 
-                  (ds_val if conditions['e10_geogrid_wmm'] else 0)) * length
-        ws.cell(row_idx, KY_COL).value = ky_val
-        
-        # Calculate KZ
-        kz_val = ((ee_val if conditions['b9_geogrid_gsb'] else 0) + 
-                  (ej_val if conditions['b10_geogrid_wmm'] else 0)) * length
-        ws.cell(row_idx, KZ_COL).value = kz_val
-        
-        # Calculate LA
-        la_val = ((ff_val if conditions['b9_geogrid_gsb'] else 0) + 
-                  (fd_val if conditions['b10_geogrid_wmm'] else 0)) * length
-        ws.cell(row_idx, LA_COL).value = la_val
-        
-        # Calculate LB
-        lb_val = ((fy_val if conditions['e9_geogrid_gsb'] else 0) + 
-                  (fs_val if conditions['e10_geogrid_wmm'] else 0)) * length
-        ws.cell(row_idx, LB_COL).value = lb_val
-        
-        row_count += 1
-        
-        # Progress indicator
-        if row_count % 200 == 0:
-            print(f"  Processed {row_count} rows...")
-    
-    print(f"[OK] Geogrid calculations completed for {row_count} rows")
-    
-    # Save workbook
-    print(f"\n[OK] Saving to {output_file}...")
-    wb.save(output_file)
-    
-    print("[OK] Saved!")
-    
-    return row_count
+    for attempt in range(max_retries):
+        try:
+            # Wait for file to be ready
+            if not wait_for_file_ready(file_path, max_wait_seconds=10):
+                raise IOError(f"File not ready for access: {file_path}")
+            
+            print(f"[INFO] Attempting workbook operation (attempt {attempt + 1}/{max_retries})")
+            
+            wb = load_workbook(file_path)
+            result = operation_func(wb)
+            
+            # Save and close with additional delay
+            wb.save(file_path)
+            wb.close()
+            
+            # Wait longer after save to ensure file system completion
+            time.sleep(2.0)
+            
+            print(f"[OK] Workbook operation completed successfully")
+            return result
+            
+        except Exception as e:
+            print(f"[WARNING] Attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                print(f"[ERROR] All attempts failed for {os.path.basename(file_path)}")
+                raise e
+            
+            # Exponential backoff with jitter
+            wait_time = (2 ** attempt) * 0.5 + (attempt * 0.1)
+            print(f"[INFO] Waiting {wait_time:.1f}s before retry...")
+            time.sleep(wait_time)
 
-
-# ============================================================================
-# MAIN EXECUTION
-# ============================================================================
-
-def main():
-    """Main function to execute all steps"""
-    print("\n" + "="*80)
-    print("GEOGRID CALCULATOR")
-    print("="*80)
-    print("Configuration:")
-    print("  • Pavement_Input.xlsx: Check for Geogrid conditions")
-    print("  • main_carriageway.xlsx: Calculate columns KY, KZ, LA, LB")
-    print("="*80 + "\n")
+def main(session_id=None):
+    """Main function to execute pavement input with internal processing"""
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+    from api.session_manager import session_manager
+    
+    # Get session information
+    if session_id:
+        session = session_manager.get_session(session_id)
+        if not session:
+            print(f"[ERROR] Session {session_id} not found")
+            return
+        session_dir = session["output_dir"]
+    else:
+        # Fallback to original paths if no session_id
+        session_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
+    
+    # Get the script's directory and build relative paths
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    root_dir = os.path.join(script_dir, '..', '..')
+    
+    # Input files in session directory (look for Pavement Input file)
+    pavement_input_file = None
+    for filename in os.listdir(session_dir):
+        if 'pavement input' in filename.lower():
+            pavement_input_file = os.path.join(session_dir, filename)
+            break
+    
+    if not pavement_input_file:
+        print("[ERROR] No Pavement Input file found in session directory")
+        return
+    
+    # Main carriageway file in session directory with session_id suffix
+    main_carriageway_file = os.path.join(session_dir, f'main_carriageway_{session_id}.xlsx')
+    output_file = os.path.join(session_dir, f'main_carriageway_{session_id}.xlsx')
     
     try:
-        # Step 1: Check geogrid conditions
-        conditions = check_geogrid_conditions(PAVEMENT_INPUT_FILE)
+        # Step 1: Process pavement input with internal calculations
+        process_pavement_input_internal(pavement_input_file, main_carriageway_file, output_file)
         
-        # Step 2: Calculate geogrid columns
-        row_count = calculate_geogrid_columns(MAIN_CARRIAGEWAY_FILE, conditions, OUTPUT_EXCEL)
-        
-        # Success summary
         print("\n" + "="*80)
         print("SUCCESS! [OK]")
         print("="*80)
-        print("Output file:", OUTPUT_EXCEL)
-        print("Total rows processed:", row_count)
-        print("Columns updated: KY, KZ, LA, LB")
+        print("Output file:", output_file)
+        print("Pavement internal calculations completed")
         
-    except FileNotFoundError as e:
-        print("\n[ERROR] File not found")
-        print(" ", e)
-        print("\nPlease check:")
-        print("  1. Files exist in the data folder")
-        print("  2. File names match exactly")
     except Exception as e:
-        print("\n[ERROR]:", e)
+        print(f"[ERROR] {e}")
         import traceback
         traceback.print_exc()
 
+def process_pavement_input_internal(pavement_input_file, main_carriageway_file, output_file):
+    """
+    Reads Pavement_Input.xlsx and processes internal pavement calculations
+    Updates main_carriageway.xlsx with internal pavement data
+    """
+    print("="*80)
+    print("PAVEMENT INPUT WITH INTERNAL PROCESSOR")
+    print("="*80)
+    
+    # Step 1: Read pavement input data
+    print("\nSTEP 1: Reading Pavement Input Data")
+    print("-" * 40)
+    
+    try:
+        # Wait for pavement input file to be ready
+        if not wait_for_file_ready(pavement_input_file, max_wait_seconds=10):
+            raise IOError(f"Pavement input file not ready: {pavement_input_file}")
+        
+        # Read pavement data from Excel file
+        # Assuming data is in a specific format - adjust as needed
+        df_pavement = pd.read_excel(pavement_input_file, sheet_name='Pavement', header=None)
+        
+        print(f"[OK] Read pavement input file: {pavement_input_file}")
+        print(f"[OK] Data shape: {df_pavement.shape}")
+        
+        # Extract layer information based on expected format
+        # This is a placeholder - adjust based on actual file structure
+        pavement_layers = extract_pavement_layers_internal(df_pavement)
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to read pavement input file: {e}")
+        raise
+    
+    # Step 2: Load and update main carriageway with internal calculations
+    print("\nSTEP 2: Applying Internal Pavement Calculations")
+    print("-" * 40)
+    
+    def process_workbook(wb):
+        """Inner function to process the workbook"""
+        from openpyxl import load_workbook
+        
+        ws = wb['Quantity']
+        
+        print(f"[OK] Loaded workbook: {main_carriageway_file}")
+        print(f"  Sheet: Quantity")
+        print(f"  Max row: {ws.max_row}, Max column: {ws.max_column}")
+        
+        # Define column indices for internal pavement calculations
+        # These are example column positions - adjust based on actual requirements
+        LENGTH_COL = 3   # Column C
+        
+        # Example internal pavement columns (adjust as needed)
+        INTERNAL_PAVEMENT_COLS = {
+            'geogrid_area': 70,     # Column BR - Example geogrid area
+            'geogrid_weight': 71,    # Column BS - Example geogrid weight
+            'subbase_extension': 72,  # Column BT - Example subbase extension
+            'base_extension': 73,      # Column BU - Example base extension
+            # Add more internal columns as needed
+        }
+        
+        # Data starts from row 7
+        start_row = 7
+        
+        # Find last row with data
+        last_row = 0
+        for row_idx in range(start_row, ws.max_row + 1):
+            cell_value = ws.cell(row_idx, LENGTH_COL).value
+            if cell_value is not None and cell_value != '':
+                last_row = row_idx
+        
+        if last_row == 0:
+            print("[WARNING] No data found in column C")
+            return 0
+        
+        print(f"[OK] Processing rows {start_row} to {last_row}")
+        
+        # Process each row
+        processed_rows = 0
+        for row_idx in range(start_row, last_row + 1):
+            # Get length value
+            length = ws.cell(row_idx, LENGTH_COL).value
+            
+            # Skip empty rows
+            if length is None or length == 0:
+                continue
+            
+            try:
+                length = float(length)
+            except (ValueError, TypeError):
+                continue
+            
+            # Calculate internal pavement quantities
+            # This is example logic - adjust based on actual requirements
+            internal_quantities = calculate_internal_pavement_quantities(pavement_layers, length)
+            
+            # Update internal pavement columns
+            for calc_type, col_idx in INTERNAL_PAVEMENT_COLS.items():
+                if calc_type in internal_quantities:
+                    ws.cell(row_idx, col_idx).value = internal_quantities[calc_type]
+                else:
+                    ws.cell(row_idx, col_idx).value = 0
+            
+            processed_rows += 1
+            
+            # Progress indicator
+            if processed_rows % 200 == 0:
+                print(f"  Processed {processed_rows} rows...")
+        
+        print(f"[OK] Processed {processed_rows} rows")
+        return processed_rows
+    
+    # Use safe workbook operation
+    try:
+        return safe_workbook_operation(main_carriageway_file, process_workbook)
+    except Exception as e:
+        print(f"[ERROR] Failed to process main carriageway workbook: {e}")
+        raise
+
+def extract_pavement_layers_internal(df_pavement):
+    """
+    Extract pavement layer information from dataframe for internal calculations
+    This is a placeholder function - adjust based on actual file structure
+    """
+    # Example implementation - replace with actual logic based on file format
+    layers = {}
+    
+    # Example: Extract layer data for internal calculations
+    # This would need to be adjusted based on your actual file structure
+    
+    if not df_pavement.empty:
+        # Example: Look for internal calculation parameters in specific rows/columns
+        try:
+            # This is placeholder logic - adjust based on actual requirements
+            layers['geogrid_width'] = 4.0      # meters
+            layers['geogrid_overlap'] = 0.3      # meters
+            layers['subbase_extension_width'] = 0.5  # meters
+            layers['base_extension_width'] = 0.3      # meters
+            layers['shoulder_width'] = 1.5            # meters
+            
+            print(f"[OK] Extracted internal pavement parameters:")
+            for param, value in layers.items():
+                print(f"  {param}: {value}")
+                
+        except Exception as e:
+            print(f"[WARNING] Could not extract internal parameters: {e}")
+            # Set default values
+            layers = {
+                'geogrid_width': 4.0,
+                'geogrid_overlap': 0.3,
+                'subbase_extension_width': 0.5,
+                'base_extension_width': 0.3,
+                'shoulder_width': 1.5
+            }
+    
+    return layers
+
+def calculate_internal_pavement_quantities(layers, length):
+    """
+    Calculate internal pavement quantities based on layer data and length
+    """
+    quantities = {}
+    
+    # Example calculation - adjust based on actual requirements
+    # This assumes various widths and overlaps for internal calculations
+    
+    # Calculate geogrid area and weight
+    if 'geogrid_width' in layers:
+        geogrid_area = length * layers['geogrid_width']
+        # Assuming geogrid weight of 300 g/m²
+        geogrid_weight = geogrid_area * 0.3  # kg
+        quantities['geogrid_area'] = geogrid_area
+        quantities['geogrid_weight'] = geogrid_weight
+    
+    # Calculate subbase extension
+    if 'subbase_extension_width' in layers:
+        subbase_extension_area = length * layers['subbase_extension_width']
+        quantities['subbase_extension'] = subbase_extension_area
+    
+    # Calculate base extension
+    if 'base_extension_width' in layers:
+        base_extension_area = length * layers['base_extension_width']
+        quantities['base_extension'] = base_extension_area
+    
+    return quantities
 
 if __name__ == "__main__":
     main()

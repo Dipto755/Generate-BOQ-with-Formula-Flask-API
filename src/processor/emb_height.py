@@ -1,269 +1,307 @@
 """
-Embankment Height Processor
-Reads Emb_Height.xlsx from row 5, columns A, E, F
-Populates main_carriageway.xlsx Quantity sheet columns AQ and AR from row 7 onwards
+Embankment Height Calculator
+Reads EMB_HEIGHT.xlsx to calculate embankment heights for each TCS chainage
+Calculates columns BJ, BK, BL, BM in main_carriageway.xlsx based on level differences
 """
 
 import pandas as pd
 import os
 import sys
 import io
+import time
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# ============================================================================
-# FILE PATHS - Update these to match your folder structure
-# ============================================================================
-
-script_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.join(script_dir, '..', '..')
-
-# Input files
-EMB_HEIGHT_FILE = os.path.join(root_dir, 'data', 'Emb Height.xlsx')
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
-
-# Output file
-OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
-
-
-# ============================================================================
-# STEP 1: Read Emb_Height.xlsx and Create Dictionary
-# ============================================================================
-
-def create_emb_height_dictionary(emb_height_file):
-    """
-    Reads Emb_Height.xlsx starting from Excel row 5
-    Creates dictionary with Column A as key, Columns E and F as values
-    Returns: dictionary {chainage: {'left': value_E, 'right': value_F}}
-    """
-    print("="*80)
-    print("STEP 1: Creating Embankment Height Dictionary")
-    print("="*80)
+def main(session_id=None):
+    """Main function to execute embankment height processing"""
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+    from api.session_manager import session_manager
     
-    # Read the Excel file
-    df = pd.read_excel(emb_height_file)
+    # Get session information
+    if session_id:
+        session = session_manager.get_session(session_id)
+        if not session:
+            print(f"[ERROR] Session {session_id} not found")
+            return
+        session_dir = session["output_dir"]
+    else:
+        # Fallback to original paths if no session_id
+        session_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'data')
     
-    print("[OK] Read Emb_Height.xlsx:", len(df), "total rows")
+    # Get the script's directory and build relative paths
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    root_dir = os.path.join(script_dir, '..', '..')
     
-    # Start from Excel row 5 (pandas index 4)
-    data_start_row = 3
+    # Input files in session directory (look for Embankment Height file)
+    emb_height_file = None
+    for filename in os.listdir(session_dir):
+        if 'emb_height' in filename.lower() or 'embankment' in filename.lower():
+            emb_height_file = os.path.join(session_dir, filename)
+            break
     
-    # Extract data from row 5 onwards
-    data = df.iloc[data_start_row:]
+    if not emb_height_file:
+        print("[ERROR] No Embankment Height file found in session directory")
+        return
     
-    print("[OK] Extracting data from Excel row 5 (pandas index", data_start_row, ")")
-    print("[OK] Total data rows:", len(data))
-    
-    # Create dictionary with Column A as key
-    emb_dict = {}
-    skipped = 0
-    
-    for idx, row in data.iterrows():
-        # Column A (index 0) = Key (chainage)
-        key = row.iloc[0]
-        
-        # Column E (index 4) = Left height
-        value_e = row.iloc[4]
-        
-        # Column F (index 5) = Right height
-        value_f = row.iloc[5]
-        
-        # Skip if key is NaN
-        if pd.notna(key):
-            emb_dict[float(key)] = {
-                'left': float(value_e) if pd.notna(value_e) else None,
-                'right': float(value_f) if pd.notna(value_f) else None
-            }
-        else:
-            skipped += 1
-    
-    print("[OK] Created dictionary with", len(emb_dict), "entries")
-    if skipped > 0:
-        print("  (Skipped", skipped, "rows with NaN keys)")
-    
-    # Show range
-    if emb_dict:
-        keys = sorted(emb_dict.keys())
-        print("[OK] Key (chainage) range: %.3f to %.3f" % (keys[0], keys[-1]))
-        print("\n  Sample entries:")
-        for i, key in enumerate(keys[:3]):
-            print("    %s: Left=%s, Right=%s" % (key, emb_dict[key]['left'], emb_dict[key]['right']))
-    
-    return emb_dict
-
-
-# ============================================================================
-# STEP 2: Populate main_carriageway.xlsx with Embankment Heights
-# ============================================================================
-
-def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
-    """
-    Reads main_carriageway.xlsx Quantity sheet from row 7 onwards
-    Matches Column A with dict keys
-    Populates columns AQ (index 42) and AR (index 43) with embankment heights
-    Writes back starting from row 7
-    """
-    print("\n" + "="*80)
-    print("STEP 2: Populating main_carriageway.xlsx (Quantity sheet)")
-    print("="*80)
-    
-    # Read data from row 7 onwards (skiprows=6 to skip rows 1-6)
-    df = pd.read_excel(main_carriageway_file, sheet_name='Quantity', skiprows=6, header=None)
-    
-    # Remove empty rows
-    df = df.dropna(how='all')
-    
-    print("[OK] Read Quantity sheet from row 7:", len(df), "data rows")
-    print("  Current columns:", len(df.columns))
-    
-    # Column AQ = index 42 (43rd column, 0-indexed)
-    # Column AR = index 43 (44th column, 0-indexed)
-    AQ_COL_INDEX = 42
-    AR_COL_INDEX = 43
-    
-    # Ensure we have enough columns
-    while len(df.columns) <= AR_COL_INDEX:
-        df[len(df.columns)] = None
-    
-    print("\n[OK] Columns AQ (42) and AR (43) ready")
-    print("  Total columns:", len(df.columns))
-    
-    print("\n[OK] Matching rows starting from index 0")
-    
-    # Match and populate
-    matched = 0
-    unmatched = 0
-    
-    for idx in range(len(df)):
-        # Get the key from Column A (index 0)
-        key = df.iloc[idx, 0]
-        
-        # Try to match in dictionary
-        if pd.notna(key) and float(key) in emb_dict:
-            heights = emb_dict[float(key)]
-            # Write to column index 42 (AQ) and 43 (AR)
-            df.iloc[idx, AQ_COL_INDEX] = heights['left']
-            df.iloc[idx, AR_COL_INDEX] = heights['right']
-            matched += 1
-        else:
-            # Fill with value from exactly upper cell (previous row)
-            if idx > 0:
-                df.iloc[idx, AQ_COL_INDEX] = df.iloc[idx - 1, AQ_COL_INDEX]
-                df.iloc[idx, AR_COL_INDEX] = df.iloc[idx - 1, AR_COL_INDEX]
-            else:
-                # For the first row, set to None if unmatched
-                df.iloc[idx, AQ_COL_INDEX] = None
-                df.iloc[idx, AR_COL_INDEX] = None
-            unmatched += 1
-        
-        # Progress indicator
-        if (idx + 1) % 200 == 0:
-            print("  Processed %d/%d rows..." % (idx + 1, len(df)))
-    
-    print("\n[OK] Matching complete:")
-    print("  Matched:", matched)
-    print("  Unmatched:", unmatched)
-    
-    if matched > 0:
-        match_pct = matched / (matched + unmatched) * 100
-        print("  Match rate: %.1f%%" % match_pct)
-    
-    # Save to Excel - write to Quantity sheet starting from row 7 (0-indexed row 6)
-    print("\n[OK] Writing to", output_file, "(Quantity sheet, starting row 7)...")
-    
-    with pd.ExcelWriter(output_file, engine='openpyxl', mode='a', if_sheet_exists='overlay') as writer:
-        df.to_excel(writer, sheet_name='Quantity', startrow=6, startcol=0, index=False, header=False)
-    
-    print("[OK] Successfully written", len(df), "rows starting from row 7")
-    
-    return df, matched, unmatched
-
-
-# ============================================================================
-# MAIN EXECUTION
-# ============================================================================
-
-def main():
-    """Main function to execute all steps"""
-    print("\n" + "="*80)
-    print("EMBANKMENT HEIGHT PROCESSOR")
-    print("="*80)
-    print("Configuration:")
-    print("  • Emb_Height.xlsx: Read from Excel row 5 (Col A, E, F)")
-    print("  • main_carriageway.xlsx: Quantity sheet, starting row 7")
-    print("  • Output: Populate columns AQ and AR")
-    print("="*80 + "\n")
-    
-    # Define column indices at the top
-    AQ_COL_INDEX = 42
-    AR_COL_INDEX = 43
+    # Main carriageway file in session directory with session_id suffix
+    main_carriageway_file = os.path.join(session_dir, f'main_carriageway_{session_id}.xlsx')
+    output_file = os.path.join(session_dir, f'main_carriageway_{session_id}.xlsx')
     
     try:
-        # Step 1: Create embankment height dictionary
-        emb_dict = create_emb_height_dictionary(EMB_HEIGHT_FILE)
+        # Step 1: Calculate embankment heights
+        calculate_embankment_heights(emb_height_file, main_carriageway_file, output_file)
         
-        # Step 2: Populate main_carriageway.xlsx
-        df, matched, unmatched = populate_embankment_heights(
-            MAIN_CARRIAGEWAY_FILE, emb_dict, OUTPUT_EXCEL
-        )
-        
-        # Success summary
         print("\n" + "="*80)
         print("SUCCESS! [OK]")
         print("="*80)
-        print("Output file:", OUTPUT_EXCEL)
-        print("Sheet: Quantity")
-        print("Starting row: 7")
-        print("Total data rows:", len(df))
-        print("Total columns:", len(df.columns))
+        print("Output file:", output_file)
+        print("Columns updated: BJ, BK, BL, BM (Embankment Heights)")
         
-        # Show sample output
-        print("\n" + "="*80)
-        print("SAMPLE OUTPUT:")
-        print("-"*80)
-        
-        # Find rows with embankment heights populated
-        rows_with_heights = df[df.iloc[:, AQ_COL_INDEX].notna()]
-        
-        if len(rows_with_heights) > 0:
-            print("\nFound", len(rows_with_heights), "rows with embankment heights")
-            print("\nFirst 3 rows with heights:")
-            
-            for i in range(min(3, len(rows_with_heights))):
-                idx = rows_with_heights.index[i]
-                row = rows_with_heights.iloc[i]
-                print("\n  Data row %d (Excel row %d):" % (i + 1, idx + 7))
-                print("    Column A (from):", row.iloc[0])
-                print("    Column D (type):", row.iloc[3] if len(row) > 3 else 'N/A')
-                print("    Column AQ (Emb_Height_Left):", row.iloc[AQ_COL_INDEX])
-                print("    Column AR (Emb_Height_Right):", row.iloc[AR_COL_INDEX])
-        else:
-            print("\n[WARNING] No matching chainages found")
-            print("Possible reasons:")
-            print("  1. Chainage ranges don't overlap")
-            print("  2. Key values don't match exactly")
-            print("\nColumns AQ and AR have been added but remain empty")
-        
-        # Column layout
-        print("\n" + "="*80)
-        print("FINAL COLUMN LAYOUT:")
-        print("-"*80)
-        print("  Columns A-AP: First 42 columns")
-        print("  Column AQ (index 42): Emb_Height_Left")
-        print("  Column AR (index 43): Emb_Height_Right")
-        print("  Total columns:", len(df.columns))
-        
-    except FileNotFoundError as e:
-        print("\n[ERROR] File not found")
-        print(" ", e)
-        print("\nPlease check:")
-        print("  1. Files exist in the correct folders")
-        print("  2. File names match exactly")
     except Exception as e:
-        print("\n[ERROR]", e)
+        print(f"[ERROR] {e}")
         import traceback
         traceback.print_exc()
 
+def wait_for_file_ready(file_path, max_wait_seconds=15):
+    """Wait for file to be ready for access"""
+    import os
+    start_time = time.time()
+    
+    print(f"[INFO] Waiting for file to be ready: {os.path.basename(file_path)}")
+    
+    while time.time() - start_time < max_wait_seconds:
+        try:
+            # Try to open file in read mode to check if it's ready
+            with open(file_path, 'rb') as f:
+                pass
+            # Additional check: try to read first few bytes
+            with open(file_path, 'rb') as f:
+                f.read(1024)  # Try to read first 1KB
+            print(f"[OK] File is ready for access: {os.path.basename(file_path)}")
+            return True
+        except (IOError, PermissionError) as e:
+            print(f"[WAIT] File not ready, waiting... ({time.time() - start_time:.1f}s elapsed)")
+            time.sleep(1.0)
+        except Exception as e:
+            print(f"[ERROR] Unexpected error waiting for file: {e}")
+            return False
+    
+    print(f"[ERROR] Timeout waiting for file to be ready: {file_path}")
+    return False
+
+def safe_workbook_operation(file_path, operation_func, max_retries=5):
+    """Safely perform workbook operations with enhanced retry logic"""
+    import os
+    from openpyxl import load_workbook
+    
+    for attempt in range(max_retries):
+        try:
+            # Wait for file to be ready
+            if not wait_for_file_ready(file_path, max_wait_seconds=10):
+                raise IOError(f"File not ready for access: {file_path}")
+            
+            print(f"[INFO] Attempting workbook operation (attempt {attempt + 1}/{max_retries})")
+            
+            wb = load_workbook(file_path)
+            result = operation_func(wb)
+            
+            # Save and close with additional delay
+            wb.save(file_path)
+            wb.close()
+            
+            # Wait longer after save to ensure file system completion
+            time.sleep(2.0)
+            
+            print(f"[OK] Workbook operation completed successfully")
+            return result
+            
+        except Exception as e:
+            print(f"[WARNING] Attempt {attempt + 1} failed: {e}")
+            if attempt == max_retries - 1:
+                print(f"[ERROR] All attempts failed for {os.path.basename(file_path)}")
+                raise e
+            
+            # Exponential backoff with jitter
+            wait_time = (2 ** attempt) * 0.5 + (attempt * 0.1)
+            print(f"[INFO] Waiting {wait_time:.1f}s before retry...")
+            time.sleep(wait_time)
+
+def calculate_embankment_heights(emb_height_file, main_carriageway_file, output_file):
+    """
+    Reads EMB_HEIGHT.xlsx and main_carriageway.xlsx
+    Calculates embankment heights based on level differences
+    Updates columns BJ, BK, BL, BM in main_carriageway.xlsx
+    """
+    print("="*80)
+    print("EMBANKMENT HEIGHT CALCULATOR")
+    print("="*80)
+    
+    # Read embankment height data
+    print("\nSTEP 1: Reading Embankment Height Data")
+    print("-" * 40)
+    
+    try:
+        # Wait for embankment file to be ready
+        if not wait_for_file_ready(emb_height_file, max_wait_seconds=10):
+            raise IOError(f"Embankment height file not ready: {emb_height_file}")
+        
+        # Read columns B, C, D from EMB_HEIGHT.xlsx starting from row 7
+        df_emb = pd.read_excel(emb_height_file, sheet_name='Embankment', skiprows=6, usecols='B:D', header=None)
+        df_emb.columns = ['Chainage', 'Existing_Level', 'Proposed_Level']
+        
+        # Remove empty rows
+        df_emb = df_emb.dropna(how='all')
+        
+        # Convert to numeric
+        df_emb['Chainage'] = pd.to_numeric(df_emb['Chainage'], errors='coerce')
+        df_emb['Existing_Level'] = pd.to_numeric(df_emb['Existing_Level'], errors='coerce')
+        df_emb['Proposed_Level'] = pd.to_numeric(df_emb['Proposed_Level'], errors='coerce')
+        
+        print(f"[OK] Read {len(df_emb)} rows from embankment height file")
+        print(f"[OK] Chainage range: {df_emb['Chainage'].min():.3f} to {df_emb['Chainage'].max():.3f}")
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to read embankment height file: {e}")
+        raise
+    
+    # Load and process main carriageway using safe operation
+    print("\nSTEP 2: Processing Main Carriageway Data")
+    print("-" * 40)
+    
+    def process_workbook(wb):
+        """Inner function to process the workbook"""
+        from openpyxl import load_workbook
+        
+        ws = wb['Quantity']
+        
+        print(f"[OK] Loaded workbook: {main_carriageway_file}")
+        print(f"  Sheet: Quantity")
+        print(f"  Max row: {ws.max_row}, Max column: {ws.max_column}")
+        
+        # Define column indices (Excel columns, 1-indexed)
+        FROM_COL = 1    # Column A
+        TO_COL = 2      # Column B
+        LENGTH_COL = 3   # Column C
+        
+        BJ_COL = 62     # Column BJ
+        BK_COL = 63     # Column BK
+        BL_COL = 64     # Column BL
+        BM_COL = 65     # Column BM
+        
+        # Data starts from row 7
+        start_row = 7
+        
+        # Find last row with data in column C
+        last_row = 0
+        for row_idx in range(start_row, ws.max_row + 1):
+            cell_value = ws.cell(row_idx, LENGTH_COL).value
+            if cell_value is not None and cell_value != '':
+                last_row = row_idx
+        
+        if last_row == 0:
+            print("[WARNING] No data found in column C")
+            return 0
+        
+        print(f"[OK] Processing rows {start_row} to {last_row}")
+        
+        # Process each row in main carriageway
+        processed_rows = 0
+        for row_idx in range(start_row, last_row + 1):
+            # Get chainage range
+            from_chainage = ws.cell(row_idx, FROM_COL).value
+            to_chainage = ws.cell(row_idx, TO_COL).value
+            length = ws.cell(row_idx, LENGTH_COL).value
+            
+            # Skip empty rows
+            if from_chainage is None or to_chainage is None or length is None or length == 0:
+                continue
+            
+            try:
+                from_chainage = float(from_chainage)
+                to_chainage = float(to_chainage)
+            except (ValueError, TypeError):
+                continue
+            
+            # Calculate embankment heights at start and end of section
+            start_height = get_embankment_height(df_emb, from_chainage)
+            end_height = get_embankment_height(df_emb, to_chainage)
+            
+            # Calculate average height for section
+            avg_height = (start_height + end_height) / 2 if start_height and end_height else 0
+            
+            # Calculate volume components
+            volume_per_meter = avg_height if avg_height else 0
+            total_volume = volume_per_meter * length if length else 0
+            
+            # Write to columns BJ, BK, BL, BM
+            ws.cell(row_idx, BJ_COL).value = start_height if start_height else 0
+            ws.cell(row_idx, BK_COL).value = end_height if end_height else 0
+            ws.cell(row_idx, BL_COL).value = volume_per_meter if volume_per_meter else 0
+            ws.cell(row_idx, BM_COL).value = total_volume if total_volume else 0
+            
+            processed_rows += 1
+            
+            # Progress indicator
+            if processed_rows % 200 == 0:
+                print(f"  Processed {processed_rows} rows...")
+        
+        print(f"[OK] Processed {processed_rows} rows")
+        return processed_rows
+    
+    # Use safe workbook operation
+    try:
+        return safe_workbook_operation(main_carriageway_file, process_workbook)
+    except Exception as e:
+        print(f"[ERROR] Failed to process main carriageway workbook: {e}")
+        raise
+
+def get_embankment_height(df_emb, chainage):
+    """
+    Get embankment height at a specific chainage using linear interpolation
+    """
+    if df_emb.empty:
+        return None
+    
+    # Find nearest embankment data points
+    # Look for points before and after chainage
+    before_point = None
+    after_point = None
+    
+    for idx, row in df_emb.iterrows():
+        if pd.isna(row['Chainage']):
+            continue
+            
+        emb_chainage = float(row['Chainage'])
+        
+        if emb_chainage <= chainage:
+            before_point = row
+        if emb_chainage >= chainage and after_point is None:
+            after_point = row
+            break
+    
+    # Handle edge cases
+    if before_point is None:
+        if after_point is None:
+            return None
+        return float(after_point['Proposed_Level']) - float(after_point['Existing_Level'])
+    
+    if after_point is None:
+        return float(before_point['Proposed_Level']) - float(before_point['Existing_Level'])
+    
+    # Linear interpolation
+    if before_point['Chainage'] == after_point['Chainage']:
+        height_diff = float(after_point['Proposed_Level']) - float(after_point['Existing_Level'])
+    else:
+        # Interpolate between points
+        ratio = (chainage - float(before_point['Chainage'])) / (float(after_point['Chainage']) - float(before_point['Chainage']))
+        
+        start_height = float(before_point['Proposed_Level']) - float(before_point['Existing_Level'])
+        end_height = float(after_point['Proposed_Level']) - float(after_point['Existing_Level'])
+        
+        height_diff = start_height + ratio * (end_height - start_height)
+    
+    return max(0, height_diff)  # Ensure non-negative height
 
 if __name__ == "__main__":
     main()

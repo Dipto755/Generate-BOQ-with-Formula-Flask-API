@@ -568,6 +568,58 @@ def download_file(session_id):
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+    
+@app.route('/api/sessions', methods=['GET'])
+def get_all_sessions():
+    """Get all sessions with pagination"""
+    try:
+        session_manager = SessionManager()
+        
+        # Get query parameters with defaults
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 10, type=int)
+        
+        # Validate pagination
+        if page < 1:
+            page = 1
+        if limit < 1 or limit > 100:
+            limit = 10
+        
+        # Calculate skip for pagination
+        skip = (page - 1) * limit
+        
+        # Get sessions with pagination (newest first)
+        sessions_cursor = session_manager.sessions.find().sort('created_at', -1).skip(skip).limit(limit)
+        
+        sessions = []
+        for session in sessions_cursor:
+            session_data = {
+                'session_id': session['session_id'],
+                'status': session['status'],
+                'created_at': session['created_at'].isoformat(),
+                'updated_at': session['updated_at'].isoformat(),
+                'input_files_count': len(session['input_files']),
+                'has_error': session['error_info']['has_error']
+            }
+            
+            # Add output file info if exists
+            if session.get('output_file'):
+                session_data['output_file'] = session['output_file']
+            
+            sessions.append(session_data)
+        
+        total_sessions = session_manager.sessions.count_documents({})
+
+        return jsonify({
+            'sessions': sessions,
+            'total_sessions': total_sessions
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Failed to fetch sessions',
+            'message': str(e)
+        }), 500
 
 @app.route('/', methods=['GET'])
 @app.route('/api', methods=['GET'])
@@ -613,6 +665,16 @@ def root():
                     'session_id': 'string (required)'
                 },
                 'usage': 'curl -X POST -H "Content-Type: application/json" -d \'{"session_id": "your_session_id"}\' http://localhost:5000/api/execute-calculation-sync'
+            },
+            'session_list': {
+                'method': 'GET',
+                'path': '/api/sessions',
+                'description': 'Get list of all sessions (paginated)',
+                'query_parameters': {
+                    'page': 'integer (optional, default: 1)',
+                    'limit': 'integer (optional, default: 10, max: 100)'
+                },
+                'usage': 'curl -X GET "http://localhost:5000/api/sessions?page=1&limit=10"'
             },
             'session_status': {
                 'method': 'GET',

@@ -5,6 +5,9 @@ from pymongo import MongoClient
 import os
 from datetime import datetime
 import traceback
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class SessionManager:
     def __init__(self):

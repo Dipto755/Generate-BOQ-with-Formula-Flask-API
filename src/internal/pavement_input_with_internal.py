@@ -16,15 +16,15 @@ if sys.platform == "win32":
 # FILE PATHS - Update these to match your folder structure
 # ============================================================================
 
+# NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.join(script_dir, '..', '..')
+# Use session directories from environment, fallback to original paths
+data_dir = os.getenv('SESSION_DATA_DIR', os.path.join(script_dir, '..', '..', 'data'))
+output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway.xlsx'))
 
-# Input files
-PAVEMENT_INPUT_FILE = os.path.join(root_dir, 'data', 'Pavement Input.xlsx')
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
-
-# Output file
-OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
+PAVEMENT_INPUT_FILE = os.path.join(data_dir, 'Pavement Input.xlsx')
+MAIN_CARRIAGEWAY_FILE = output_file
+OUTPUT_EXCEL = output_file
 
 
 # ============================================================================

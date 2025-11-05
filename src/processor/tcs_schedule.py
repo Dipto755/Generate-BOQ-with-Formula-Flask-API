@@ -7,19 +7,15 @@ import shutil
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-# Get the script's directory and build relative paths
+# NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.join(script_dir, '..', '..')
+# Use session directories from environment, fallback to original paths
+data_dir = os.getenv('SESSION_DATA_DIR', os.path.join(script_dir, '..', '..', 'data'))
+output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway.xlsx'))
+template_file = os.path.join(script_dir, '..', '..', 'template', 'main_carriageway.xlsx')
 
-# Input file in root/data folder
-input_file = os.path.join(root_dir, 'data', 'TCS Schedule.xlsx')
-
-# Template file in root/template folder
-template_file = os.path.join(root_dir, 'template', 'main_carriageway.xlsx')
-
-# Output directory and file in root/output folder
-output_dir = os.path.join(root_dir, 'output')
-output_file = os.path.join(output_dir, 'main_carriageway.xlsx')
+input_file = os.path.join(data_dir, 'TCS Schedule.xlsx')
+output_dir = os.path.dirname(output_file)
 
 # Create output directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)

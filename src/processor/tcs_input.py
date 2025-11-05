@@ -20,16 +20,16 @@ if sys.platform == "win32":
 # FILE PATHS - Update these to match your folder structure
 # ============================================================================
 
+# NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
-root_dir = os.path.join(script_dir, '..', '..')
+# Use session directories from environment, fallback to original paths
+data_dir = os.getenv('SESSION_DATA_DIR', os.path.join(script_dir, '..', '..', 'data'))
+output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway.xlsx'))
 
-# Input files
-TCS_INPUT_FILE = os.path.join(root_dir, 'data', 'TCS Input.xlsx')
-MAIN_CARRIAGEWAY_FILE = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
+TCS_INPUT_FILE = os.path.join(data_dir, 'TCS Input.xlsx')
+MAIN_CARRIAGEWAY_FILE = output_file
+OUTPUT_EXCEL = output_file
 
-# Output files
-OUTPUT_JSON = os.path.join(root_dir, 'data', 'tcs_specifications.json')
-OUTPUT_EXCEL = os.path.join(root_dir, 'output', 'main_carriageway.xlsx')
 
 
 # ============================================================================
@@ -320,10 +320,6 @@ def main():
         # Step 1: Create TCS dictionary
         tcs_dict = create_tcs_dictionary(TCS_INPUT_FILE)
         
-        # Save dictionary as JSON for reference
-        with open(OUTPUT_JSON, 'w') as f:
-            json.dump(tcs_dict, f, indent=2)
-        print(f"[OK] Saved dictionary to: {OUTPUT_JSON}")
         
         # Step 2: Populate main_carriageway.xlsx
         df = populate_specifications(MAIN_CARRIAGEWAY_FILE, tcs_dict, OUTPUT_EXCEL)

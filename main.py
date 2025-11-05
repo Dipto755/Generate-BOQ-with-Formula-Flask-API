@@ -1,20 +1,23 @@
 """
-Flask API for BOQ Generation
-============================
-Accepts 4 Excel file uploads and generates populated main_carriageway.xlsx
+Flask API for BOQ Generation with Session Management
 """
-
 import os
 import sys
 import subprocess
+import threading
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import traceback
+import shutil
+from datetime import datetime
+
+# Import session manager
+from api.session_manager import SessionManager
 
 # Initialize Flask app
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+CORS(app)
 
 # Configuration
 ALLOWED_EXTENSIONS = {'xlsx', 'xls'}
@@ -27,7 +30,7 @@ OUTPUT_DIR = PROJECT_ROOT / 'output'
 TEMPLATE_DIR = PROJECT_ROOT / 'template'
 SRC_DIR = PROJECT_ROOT / 'src'
 
-# Required file names (as expected by processors)
+# Required file names
 REQUIRED_FILES = {
     'tcs_schedule': 'TCS Schedule.xlsx',
     'tcs_input': 'TCS Input.xlsx',
@@ -37,17 +40,14 @@ REQUIRED_FILES = {
 
 # Template file
 TEMPLATE_FILE = TEMPLATE_DIR / 'main_carriageway.xlsx'
-OUTPUT_FILE = OUTPUT_DIR / 'main_carriageway.xlsx'
 
 # Sequential script path
 SEQUENTIAL_SCRIPT = SRC_DIR / 'sequential.py'
-
 
 def allowed_file(filename):
     """Check if file extension is allowed"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
-
 
 def ensure_directories():
     """Ensure required directories exist"""
@@ -55,93 +55,82 @@ def ensure_directories():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
 
-
 def validate_template():
     """Validate that template file exists"""
     if not TEMPLATE_FILE.exists():
-        raise FileNotFoundError(
-            f"Template file not found: {TEMPLATE_FILE}\n"
-            "Please ensure template/main_carriageway.xlsx exists."
-        )
+        raise FileNotFoundError(f"Template file not found: {TEMPLATE_FILE}")
 
-
-def save_uploaded_file(file, target_name):
-    """Save uploaded file to data directory with specific name"""
-    if file.filename == '':
-        raise ValueError(f"File '{target_name}' is empty")
-    
-    if not allowed_file(file.filename):
-        raise ValueError(
-            f"Invalid file type for '{target_name}'. "
-            "Only .xlsx and .xls files are allowed."
-        )
-    
-    # Check file size
-    file.seek(0, os.SEEK_END)
-    file_size = file.tell()
-    file.seek(0)
-    
-    if file_size > MAX_FILE_SIZE:
-        raise ValueError(
-            f"File '{target_name}' is too large. "
-            f"Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f} MB"
-        )
-    
-    # Save to data directory with exact name expected by processors
-    target_path = DATA_DIR / target_name
-    file.save(str(target_path))
-    
-    # Verify file was saved
-    if not target_path.exists():
-        raise IOError(f"Failed to save file: {target_name}")
-    
-    return target_path
-
-
-def run_sequential_processing():
-    """Run the sequential.py processing pipeline"""
-    print(f"Running sequential processing from: {SEQUENTIAL_SCRIPT}")
-    
-    if not SEQUENTIAL_SCRIPT.exists():
-        raise FileNotFoundError(
-            f"Sequential script not found: {SEQUENTIAL_SCRIPT}"
-        )
-    
-    # Change to project root to ensure relative imports work
-    original_cwd = os.getcwd()
+def run_session_processing(session_id, session_data_dir, session_output_file):
+    """
+    Run the sequential processing for a specific session
+    This runs in a separate thread
+    """
+    session_manager = SessionManager()
     
     try:
-        os.chdir(PROJECT_ROOT)  # Change to project root
+        # Update session status to processing
+        session_manager.set_processing_started(session_id)
         
-        # Run sequential.py as a subprocess
-        # Set PYTHONPATH to include project root for imports
-        env = os.environ.copy()
-        env['PYTHONPATH'] = str(PROJECT_ROOT)
+        # Change to project root to ensure relative imports work
+        original_cwd = os.getcwd()
         
-        result = subprocess.run(
-            [sys.executable, str(SEQUENTIAL_SCRIPT)],
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 minute timeout
-            env=env,
-            cwd=PROJECT_ROOT
-        )
-        
-        if result.returncode != 0:
-            error_msg = f"Processing failed with exit code {result.returncode}\n"
-            if result.stdout:
-                error_msg += f"STDOUT:\n{result.stdout}\n"
-            if result.stderr:
-                error_msg += f"STDERR:\n{result.stderr}\n"
-            raise RuntimeError(error_msg)
-        
-        return result.stdout, result.stderr
-        
-    finally:
-        os.chdir(original_cwd)
+        try:
+            os.chdir(PROJECT_ROOT)
+            
+            # Set environment variables for session-specific paths
+            env = os.environ.copy()
+            env['SESSION_DATA_DIR'] = str(session_data_dir)
+            env['SESSION_OUTPUT_FILE'] = str(session_output_file)
+            env['SESSION_ID'] = session_id
+            
+            # Run sequential.py as a subprocess
+            result = subprocess.run(
+                [sys.executable, str(SEQUENTIAL_SCRIPT)],
+                capture_output=True,
+                text=True,
+                timeout=600,  # 10 minute timeout
+                env=env,
+                cwd=PROJECT_ROOT
+            )
+            
+            if result.returncode != 0:
+                error_msg = f"Processing failed with exit code {result.returncode}\n"
+                if result.stdout:
+                    error_msg += f"STDOUT:\n{result.stdout}\n"
+                if result.stderr:
+                    error_msg += f"STDERR:\n{result.stderr}\n"
+                raise RuntimeError(error_msg)
+            
+            # Calculate execution time
+            session = session_manager.get_session(session_id)
+            if session and session['processing_info']['started_at']:
+                started_at = session['processing_info']['started_at']
+                execution_time = (datetime.now() - started_at).total_seconds()
+                
+                # Update session with output file info
+                output_info = {
+                    'filename': session_output_file.name,
+                    'file_path': str(session_output_file),
+                    'generated_at': datetime.now(),
+                    'download_count': 0
+                }
+                
+                session_manager.set_output_file(session_id, output_info)
+                session_manager.sessions.update_one(
+                    {'session_id': session_id},
+                    {'$set': {'processing_info.execution_time_seconds': execution_time}}
+                )
+            
+            print(f"✓ Session {session_id} processing completed successfully")
+            
+        finally:
+            os.chdir(original_cwd)
+            
+    except Exception as e:
+        print(f"✗ Session {session_id} processing failed: {str(e)}")
+        session_manager.set_error(session_id, str(e), traceback.format_exc(), "sequential_processing")
 
-
-@app.route('/', methods=['GET'])
+@app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({
@@ -150,197 +139,431 @@ def health_check():
         'version': '1.0.0'
     }), 200
 
-
-@app.route('/api/generate-boq', methods=['POST'])
-def generate_boq():
-    """
-    Generate BOQ endpoint
-    Accepts 4 Excel files and returns populated main_carriageway.xlsx
-    
-    Two ways to upload:
-    1. Use specific form field names: tcs_schedule, tcs_input, emb_height, pavement_input
-    2. Upload all files with field name 'files' (will try to match by filename)
-    """
+@app.route('/api/upload-files', methods=['POST'])
+def upload_files():
+    """Upload 4 Excel files and create session"""
     try:
-        # Check if request has files
+        session_manager = SessionManager()
+        
+        # Generate unique session ID
+        session_id = session_manager.generate_session_id()
+        
+        # Create session directories
+        session_data_dir = DATA_DIR / 'sessions' / session_id
+        session_output_dir = OUTPUT_DIR / 'sessions' / session_id
+        session_data_dir.mkdir(parents=True, exist_ok=True)
+        session_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create session in MongoDB
+        session_manager.create_session(session_id)
+        
+        # Debug: Check what files we received
+        print(f"DEBUG: Request files: {list(request.files.keys())}")
+        
+        # File validation
         if not request.files:
-            return jsonify({
-                'error': 'No files provided',
-                'message': 'Please upload 4 Excel files',
-                'option_1': 'Use form fields: tcs_schedule, tcs_input, emb_height, pavement_input',
-                'option_2': 'Upload all files with field name "files" (will match by filename)'
-            }), 400
+            return jsonify({'error': 'No files provided'}), 400
         
-        # Try to get files by specific field names first (preferred method)
+        # Try to get files by specific field names first
         file_map = {}
+        file_debug_info = {}
         
-        # Method 1: Try specific field names
         for key in REQUIRED_FILES.keys():
             if key in request.files:
                 file = request.files[key]
-                if file and file.filename:
+                file_debug_info[key] = {
+                    'file_object': str(type(file)),
+                    'has_filename': hasattr(file, 'filename'),
+                    'filename': file.filename if hasattr(file, 'filename') else 'NO_FILENAME',
+                    'filename_type': str(type(file.filename)) if hasattr(file, 'filename') else 'NO_FILENAME_ATTR'
+                }
+                
+                # More robust check for valid file object with filename
+                if (file and 
+                    hasattr(file, 'filename') and 
+                    file.filename is not None and 
+                    str(file.filename).strip() != ''):
                     file_map[key] = file
+                    print(f"DEBUG: Added file for {key}: {file.filename}")
+                else:
+                    print(f"DEBUG: Skipped file for {key}: {file_debug_info[key]}")
         
-        # Method 2: If not all files found, try 'files' field
+        print(f"DEBUG: Files mapped: {list(file_map.keys())}")
+        
+        # If not all files found, try 'files' field
         if len(file_map) < 4 and 'files' in request.files:
             files = request.files.getlist('files')
+            print(f"DEBUG: Found {len(files)} files in 'files' field")
             
-            # Check if exactly 4 files are provided
             if len(files) != 4:
                 return jsonify({
                     'error': 'Incorrect number of files',
                     'message': f'Expected 4 files, received {len(files)}',
-                    'required_files': list(REQUIRED_FILES.keys())
+                    'debug_info': file_debug_info
                 }), 400
             
-            # Try to match files by filename
-            unmatched_files = []
-            
+            # Simple filename matching
             for file in files:
-                if file.filename:
-                    matched = False
+                if file and hasattr(file, 'filename') and file.filename:
                     filename_lower = file.filename.lower()
-                    
-                    # Direct filename match
                     for key, expected_name in REQUIRED_FILES.items():
                         if key not in file_map:
                             expected_lower = expected_name.lower()
                             if expected_lower in filename_lower or filename_lower in expected_lower:
                                 file_map[key] = file
-                                matched = True
+                                print(f"DEBUG: Matched {file.filename} to {key}")
                                 break
-                    
-                    # Pattern matching: try to match key words
-                    if not matched:
-                        for key in REQUIRED_FILES.keys():
-                            if key not in file_map:
-                                key_words = key.split('_')
-                                # Check if all key words appear in filename
-                                if all(word in filename_lower for word in key_words if len(word) > 2):
-                                    file_map[key] = file
-                                    matched = True
-                                    break
-                    
-                    if not matched:
-                        unmatched_files.append(file.filename)
-        
-        # Ensure directories exist
-        ensure_directories()
-        
-        # Validate template exists
-        validate_template()
         
         # Verify we have all required files
         missing_files = [k for k in REQUIRED_FILES.keys() if k not in file_map]
         if missing_files:
             return jsonify({
-                'error': 'Could not identify all required files',
-                'message': 'Please ensure your files are named clearly or use form field names matching the required keys',
+                'error': 'Missing required files',
                 'missing_files': missing_files,
-                'matched_files': list(file_map.keys()),
-                'unmatched_files': unmatched_files if 'unmatched_files' in locals() else [],
-                'hint': 'Use form field names: tcs_schedule, tcs_input, emb_height, pavement_input'
+                'required_files': list(REQUIRED_FILES.keys()),
+                'debug_info': file_debug_info,
+                'files_received': list(request.files.keys())
             }), 400
         
-        # Save uploaded files
+        # Save uploaded files to session directory
         saved_files = {}
-        
-        # Save files with correct names
         for key, file in file_map.items():
             target_name = REQUIRED_FILES[key]
-            try:
-                saved_path = save_uploaded_file(file, target_name)
-                saved_files[key] = str(saved_path)
-                print(f"Saved {key}: {target_name}")
-            except Exception as e:
+            target_path = session_data_dir / target_name
+            
+            # Additional validation for file object
+            if not file or not hasattr(file, 'filename') or not file.filename:
                 return jsonify({
-                    'error': f'Error saving file {key}',
-                    'message': str(e)
+                    'error': f'Invalid file for: {key}',
+                    'message': 'File object is invalid or has no filename',
+                    'debug_info': file_debug_info.get(key, 'NO_DEBUG_INFO')
+                }), 400
+            
+            try:
+                # Check file size and type
+                file.seek(0, os.SEEK_END)
+                file_size = file.tell()
+                file.seek(0)
+                
+                if file_size > MAX_FILE_SIZE:
+                    return jsonify({
+                        'error': f'File too large: {target_name}',
+                        'message': f'Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f} MB'
+                    }), 400
+                
+                if not allowed_file(file.filename):
+                    return jsonify({
+                        'error': f'Invalid file type: {target_name}',
+                        'message': 'Only .xlsx and .xls files are allowed'
+                    }), 400
+                
+                # Save file
+                file.save(str(target_path))
+                print(f"DEBUG: Saved file for {key} to {target_path}")
+                
+                # Add to session in MongoDB
+                file_info = {
+                    'field_name': key,
+                    'original_filename': file.filename,
+                    'saved_filename': target_name,
+                    'file_path': str(target_path),
+                    'uploaded_at': datetime.now(),
+                    'file_size_bytes': file_size
+                }
+                session_manager.add_input_file(session_id, file_info)
+                saved_files[key] = str(target_path)
+                
+            except Exception as file_error:
+                return jsonify({
+                    'error': f'Error processing file: {key}',
+                    'message': str(file_error),
+                    'file_info': {
+                        'filename': file.filename,
+                        'content_type': file.content_type if hasattr(file, 'content_type') else 'NO_CONTENT_TYPE'
+                    }
                 }), 400
         
-        # Run sequential processing
-        try:
-            stdout, stderr = run_sequential_processing()
-            print("Sequential processing completed successfully")
-        except Exception as e:
-            return jsonify({
-                'error': 'Processing failed',
-                'message': str(e),
-                'details': traceback.format_exc()
-            }), 500
-        
-        # Check if output file was created
-        if not OUTPUT_FILE.exists():
-            return jsonify({
-                'error': 'Output file not generated',
-                'message': 'Processing completed but output file was not created',
-                'expected_path': str(OUTPUT_FILE)
-            }), 500
-        
-        # Return the generated file
-        return send_file(
-            str(OUTPUT_FILE),
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            as_attachment=True,
-            download_name='main_carriageway.xlsx'
-        )
-        
-    except ValueError as e:
         return jsonify({
-            'error': 'Validation error',
-            'message': str(e)
-        }), 400
-    
-    except FileNotFoundError as e:
-        return jsonify({
-            'error': 'File not found',
-            'message': str(e)
-        }), 404
-    
+            'status': 'success',
+            'session_id': session_id,
+            'message': 'Files uploaded successfully',
+            'uploaded_files': list(saved_files.keys())
+        }), 200
+        
     except Exception as e:
+        print(f"DEBUG: Upload failed with error: {str(e)}")
+        print(f"DEBUG: Traceback: {traceback.format_exc()}")
         return jsonify({
-            'error': 'Internal server error',
+            'error': 'Upload failed',
             'message': str(e),
-            'details': traceback.format_exc()
+            'traceback': traceback.format_exc()
         }), 500
 
+@app.route('/api/execute-calculation', methods=['POST'])
+def execute_calculation():
+    """Execute calculations for a session (starts background thread)"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'error': 'session_id is required'}), 400
+        
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        if session['status'] != 'uploaded':
+            return jsonify({
+                'error': f"Cannot start calculation",
+                'message': f"Session status is '{session['status']}', must be 'uploaded'"
+            }), 400
+        
+        # Create session output file
+        session_output_dir = OUTPUT_DIR / 'sessions' / session_id
+        session_output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = f"{session_id}_main_carriageway.xlsx"
+        session_output_file = session_output_dir / output_filename
+        
+        # Copy template to session output directory
+        shutil.copy2(TEMPLATE_FILE, session_output_file)
+        
+        # Start processing in background thread
+        thread = threading.Thread(
+            target=run_session_processing,
+            args=(session_id, DATA_DIR / 'sessions' / session_id, session_output_file)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'status': 'success',
+            'session_id': session_id,
+            'message': 'Calculation started in background',
+            'output_file': output_filename
+        }), 200
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Execution failed',
+            'message': str(e)
+        }), 500
 
-@app.route('/api/generate-boq', methods=['GET'])
-def generate_boq_info():
-    """Get information about the generate-boq endpoint"""
+@app.route('/api/execute-calculation-sync', methods=['POST'])
+def execute_calculation_sync():
+    """Execute calculations for a session (synchronous - waits for completion)"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'error': 'session_id is required'}), 400
+        
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        if session['status'] != 'uploaded':
+            return jsonify({
+                'error': f"Cannot start calculation",
+                'message': f"Session status is '{session['status']}', must be 'uploaded'"
+            }), 400
+        
+        # Create session output file
+        session_output_dir = OUTPUT_DIR / 'sessions' / session_id
+        session_output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = f"{session_id}_main_carriageway.xlsx"
+        session_output_file = session_output_dir / output_filename
+        
+        # Copy template to session output directory
+        shutil.copy2(TEMPLATE_FILE, session_output_file)
+        
+        # Run processing synchronously (blocks until completion)
+        try:
+            run_session_processing(session_id, DATA_DIR / 'sessions' / session_id, session_output_file)
+            
+            # Check if processing was successful
+            updated_session = session_manager.get_session(session_id)
+            if updated_session['status'] == 'completed':
+                return jsonify({
+                    'status': 'success',
+                    'session_id': session_id,
+                    'message': 'Calculation completed successfully',
+                    'output_file': output_filename,
+                    'execution_time_seconds': updated_session['processing_info'].get('execution_time_seconds')
+                }), 200
+            else:
+                return jsonify({
+                    'error': 'Calculation failed',
+                    'session_id': session_id,
+                    'message': updated_session['error_info'].get('error_message', 'Unknown error'),
+                    'failed_script': updated_session['error_info'].get('failed_script')
+                }), 500
+                
+        except Exception as processing_error:
+            return jsonify({
+                'error': 'Processing error',
+                'session_id': session_id,
+                'message': str(processing_error)
+            }), 500
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Execution failed',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/session-status/<session_id>', methods=['GET'])
+def get_session_status(session_id):
+    """Get session status"""
+    try:
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        response_data = {
+            'session_id': session_id,
+            'status': session['status'],
+            'created_at': session['created_at'].isoformat() if session['created_at'] else None,
+            'updated_at': session['updated_at'].isoformat() if session['updated_at'] else None,
+            'has_error': session['error_info']['has_error'],
+            'error_message': session['error_info']['error_message'],
+            'input_files_count': len(session['input_files']),
+            'output_file': session['output_file']
+        }
+        
+        # Add processing info if available
+        if session['processing_info']:
+            response_data['processing_info'] = session['processing_info']
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/download-file/<session_id>', methods=['GET'])
+def download_file(session_id):
+    """Download output file for session"""
+    try:
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        if session['status'] != 'completed':
+            return jsonify({
+                'error': f"Calculation not completed", 
+                'message': f"Current status: {session['status']}"
+            }), 400
+        
+        output_file_path = session['output_file']['file_path']
+        
+        if not os.path.exists(output_file_path):
+            return jsonify({'error': 'Output file not found'}), 404
+        
+        # Increment download count
+        session_manager.sessions.update_one(
+            {'session_id': session_id},
+            {'$inc': {'output_file.download_count': 1}}
+        )
+        
+        return send_file(
+            output_file_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=session['output_file']['filename']
+        )
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/', methods=['GET'])
+@app.route('/api', methods=['GET'])
+def root():
+    """API Root - Get available endpoints and basic usage information"""
     return jsonify({
-        'endpoint': '/api/generate-boq',
-        'method': 'POST',
-        'description': 'Upload 4 Excel files to generate BOQ',
-        'required_files': {
-            'tcs_schedule': 'TCS Schedule.xlsx - Technical specification schedule',
-            'tcs_input': 'TCS Input.xlsx - Technical specification input data',
-            'emb_height': 'Emb Height.xlsx - Embankment height data',
-            'pavement_input': 'Pavement Input.xlsx - Pavement layer specifications'
+        'title': 'BOQ Generation API',
+        'version': '1.0.0',
+        'description': 'Flask API for BOQ (Bill of Quantities) Generation with Session Management',
+        'endpoints': {
+            'health': {
+                'method': 'GET',
+                'path': '/health',
+                'description': 'Health check endpoint',
+                'usage': 'curl -X GET http://localhost:5000/health'
+            },
+            'upload_files': {
+                'method': 'POST',
+                'path': '/api/upload-files',
+                'description': 'Upload 4 Excel files and create a new session',
+                'required_files': [
+                    'tcs_schedule (TCS Schedule.xlsx)',
+                    'tcs_input (TCS Input.xlsx)',
+                    'emb_height (Emb Height.xlsx)',
+                    'pavement_input (Pavement Input.xlsx)'
+                ],
+                'usage': 'curl -X POST -F "tcs_schedule=@TCS_Schedule.xlsx" -F "tcs_input=@TCS_Input.xlsx" -F "emb_height=@Emb_Height.xlsx" -F "pavement_input=@Pavement_Input.xlsx" http://localhost:5000/api/upload-files'
+            },
+            'execute_calculation': {
+                'method': 'POST',
+                'path': '/api/execute-calculation',
+                'description': 'Start BOQ calculation for a session (runs in background)',
+                'request_body': {
+                    'session_id': 'string (required)'
+                },
+                'usage': 'curl -X POST -H "Content-Type: application/json" -d \'{"session_id": "your_session_id"}\' http://localhost:5000/api/execute-calculation'
+            },
+            'execute_calculation_sync': {
+                'method': 'POST',
+                'path': '/api/execute-calculation-sync',
+                'description': 'Start BOQ calculation for a session (waits for completion)',
+                'request_body': {
+                    'session_id': 'string (required)'
+                },
+                'usage': 'curl -X POST -H "Content-Type: application/json" -d \'{"session_id": "your_session_id"}\' http://localhost:5000/api/execute-calculation-sync'
+            },
+            'session_status': {
+                'method': 'GET',
+                'path': '/api/session-status/<session_id>',
+                'description': 'Check the status of a processing session',
+                'usage': 'curl -X GET http://localhost:5000/api/session-status/your_session_id'
+            },
+            'download_file': {
+                'method': 'GET',
+                'path': '/api/download-file/<session_id>',
+                'description': 'Download the generated BOQ file (only available after completion)',
+                'usage': 'curl -X GET -O http://localhost:5000/api/download-file/your_session_id'
+            }
         },
-        'max_file_size_mb': MAX_FILE_SIZE / (1024 * 1024),
-        'allowed_formats': list(ALLOWED_EXTENSIONS),
-        'output': 'main_carriageway.xlsx - Populated BOQ file'
+        'workflow': {
+            'steps': [
+                '1. Upload 4 required Excel files using /api/upload-files',
+                '2. Get session_id from upload response',
+                '3. Start calculation using /api/execute-calculation with session_id',
+                '4. Monitor progress using /api/session-status/<session_id>',
+                '5. Download result using /api/download-file/<session_id> when status is "completed"'
+            ]
+        },
+        'session_states': {
+            'uploaded': 'Files uploaded, ready for calculation',
+            'processing': 'Calculation in progress',
+            'completed': 'Calculation completed, file ready for download',
+            'error': 'Processing failed, check error message'
+        },
+        'notes': [
+            'Maximum file size: 100 MB per file',
+            'Allowed file types: .xlsx, .xls',
+            'Session timeout: 10 minutes for processing',
+            'All files are stored temporarily and cleaned up automatically'
+        ]
     }), 200
-
-
-@app.errorhandler(404)
-def not_found(error):
-    """Handle 404 errors"""
-    return jsonify({
-        'error': 'Not found',
-        'message': 'The requested endpoint does not exist'
-    }), 404
-
-
-@app.errorhandler(500)
-def internal_error(error):
-    """Handle 500 errors"""
-    return jsonify({
-        'error': 'Internal server error',
-        'message': 'An unexpected error occurred'
-    }), 500
-
 
 if __name__ == '__main__':
     # Ensure directories exist on startup
@@ -352,11 +575,10 @@ if __name__ == '__main__':
         print(f"✓ Template file found: {TEMPLATE_FILE}")
     except FileNotFoundError as e:
         print(f"⚠ WARNING: {e}")
-        print("The API will start but processing will fail until template is available.")
     
     # Print startup information
     print("\n" + "="*80)
-    print("BOQ Generation Flask API")
+    print("BOQ Generation Flask API with Session Management")
     print("="*80)
     print(f"Project root: {PROJECT_ROOT}")
     print(f"Data directory: {DATA_DIR}")
@@ -365,11 +587,14 @@ if __name__ == '__main__':
     print("="*80)
     print("\nStarting Flask server...")
     print("API Endpoints:")
-    print("  GET  /                 - Health check")
-    print("  GET  /api/generate-boq  - API information")
-    print("  POST /api/generate-boq  - Generate BOQ (upload 4 Excel files)")
+    print("  GET  /                                    - API root")
+    print("  GET  /health                              - Health check")
+    print("  POST /api/upload-files                    - Upload files & create session")
+    print("  POST /api/execute-calculation             - Start calculation")
+    print("  POST /api/execute-calculation-sync        - Start calculation (synchronous)")
+    print("  GET  /api/session-status/<id>             - Check session status")
+    print("  GET  /api/download-file/<id>              - Download result")
     print("="*80 + "\n")
     
     # Run Flask app
     app.run(debug=True, host='0.0.0.0', port=5000)
-

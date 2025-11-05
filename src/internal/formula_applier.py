@@ -3,6 +3,7 @@ from pathlib import Path
 from openpyxl import load_workbook
 import sys
 import io
+import os
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
@@ -18,17 +19,25 @@ class FormulaApplier:
         self.template_path = Path(template_path)
         self.template = self._load_template()
         
-        # Handle input Excel file path - look in root/data/ directory
+        # NEW CODE:
+        # Use session directories from environment, fallback to original paths
         if input_excel_path is None:
-            current_dir = Path(__file__).parent
-            self.input_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
+            session_output_file = os.getenv('SESSION_OUTPUT_FILE')
+            if session_output_file:
+                self.input_excel_path = Path(session_output_file)
+            else:
+                current_dir = Path(__file__).parent
+                self.input_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
         else:
             self.input_excel_path = Path(input_excel_path)
-        
-        # Handle output Excel file path - look in root/output/ directory
+
         if output_excel_path is None:
-            current_dir = Path(__file__).parent
-            self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
+            session_output_file = os.getenv('SESSION_OUTPUT_FILE')
+            if session_output_file:
+                self.output_excel_path = Path(session_output_file)
+            else:
+                current_dir = Path(__file__).parent
+                self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
         else:
             self.output_excel_path = Path(output_excel_path)
         

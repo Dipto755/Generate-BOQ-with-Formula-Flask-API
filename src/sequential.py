@@ -6,6 +6,9 @@ Executes all data processing scripts in the correct order
 import subprocess
 import sys
 import os
+import io
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 # Get script directory
 script_dir = os.path.dirname(os.path.abspath(__file__))

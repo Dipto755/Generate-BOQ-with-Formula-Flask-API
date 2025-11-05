@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from openpyxl import load_workbook
 import sys
@@ -18,15 +19,17 @@ class FinalSumApplier:
         self.template_path = Path(template_path)
         self.template = self._load_template()
         
-        # Handle output Excel file path - look in root/output/ directory
+        # NEW CODE:
+        # Use session directories from environment, fallback to original paths
         if output_excel_path is None:
-            current_dir = Path(__file__).parent
-            self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
+            session_output_file = os.getenv('SESSION_OUTPUT_FILE')
+            if session_output_file:
+                self.output_excel_path = Path(session_output_file)
+            else:
+                current_dir = Path(__file__).parent
+                self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
         else:
             self.output_excel_path = Path(output_excel_path)
-        
-        # Ensure output directory exists
-        self.output_excel_path.parent.mkdir(parents=True, exist_ok=True)
     
     def _load_template(self):
         """Load the formula template from JSON file."""

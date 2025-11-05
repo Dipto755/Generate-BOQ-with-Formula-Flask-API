@@ -3,6 +3,9 @@ import os
 import sys
 import io
 import shutil
+from dotenv import load_dotenv
+
+load_dotenv()
 
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')

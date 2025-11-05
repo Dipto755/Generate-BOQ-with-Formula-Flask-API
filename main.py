@@ -11,7 +11,8 @@ from flask_cors import CORS
 import traceback
 import shutil
 from datetime import datetime
-
+from dotenv import load_dotenv
+load_dotenv()
 # Import session manager
 from api.session_manager import SessionManager
 
@@ -713,6 +714,15 @@ def root():
     }), 200
 
 if __name__ == '__main__':
+    # Load environment variables
+    
+    
+    # Print MongoDB configuration
+    mongodb_uri = os.getenv('MONGO_URI')
+    db_name = os.getenv('MONGO_DB_NAME')
+    print(f"✓ MongoDB URI: {mongodb_uri}")
+    print(f"✓ Database: {db_name}")
+    
     # Ensure directories exist on startup
     ensure_directories()
     

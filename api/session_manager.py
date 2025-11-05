@@ -7,11 +7,13 @@ from datetime import datetime
 import traceback
 from dotenv import load_dotenv
 
-load_dotenv()
+
 
 class SessionManager:
     def __init__(self):
-        self.client = MongoClient(os.getenv('MONGODB_URI'))
+        load_dotenv()
+        
+        self.client = MongoClient(os.getenv('MONGO_URI'))
         self.db = self.client[os.getenv('MONGO_DB_NAME')]
         self.sessions = self.db[os.getenv('SESSION_COLLECTION', 'sessions')]
     

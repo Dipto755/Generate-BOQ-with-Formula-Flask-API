@@ -20,7 +20,7 @@ class SessionManager:
         """Create new session"""
         session_data = {
             'session_id': session_id,
-            'status': 'uploaded',  # uploaded, processing, completed, failed
+            'status': 'uploaded',
             'created_at': datetime.now(),
             'updated_at': datetime.now(),
             'input_files': [],
@@ -36,7 +36,8 @@ class SessionManager:
                 'error_traceback': None,
                 'failed_script': None
             },
-            'metadata': {}
+            'metadata': {},
+            'progress': {}  # Ensure this field exists
         }
         self.sessions.insert_one(session_data)
         return session_data
@@ -51,6 +52,16 @@ class SessionManager:
         self.sessions.update_one(
             {'session_id': session_id},
             {'$set': update_data}
+        )
+    
+    def update_progress(self, session_id, progress_data):
+        """Update processing progress"""
+        self.sessions.update_one(
+            {'session_id': session_id},
+            {'$set': {
+                'progress': progress_data,
+                'updated_at': datetime.now()
+            }}
         )
     
     def add_input_file(self, session_id, file_info):

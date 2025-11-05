@@ -62,14 +62,38 @@ def validate_template():
 
 def run_session_processing(session_id, session_data_dir, session_output_file):
     """
-    Run the sequential processing for a specific session
-    This runs in a separate thread
+    Run the sequential processing for a specific session with progress tracking
     """
     session_manager = SessionManager()
     
     try:
-        # Update session status to processing
+        # Update session status to processing IMMEDIATELY
+        session_manager.update_session_status(session_id, 'processing')
         session_manager.set_processing_started(session_id)
+        
+        # Define processing steps with user-friendly names
+        processing_steps = [
+            {'script': 'tcs_schedule', 'name': 'TCS Schedule Processing', 'message': 'Processing TCS schedule data...'},
+            {'script': 'tcs_input', 'name': 'TCS Input Processing', 'message': 'Processing TCS input specifications...'},
+            {'script': 'emb_height', 'name': 'Embankment Height Processing', 'message': 'Processing embankment height data...'},
+            {'script': 'pavement_input', 'name': 'Pavement Input Processing', 'message': 'Processing pavement layer specifications...'},
+            {'script': 'constant_fill', 'name': 'Constant Values Processing', 'message': 'Applying constant values...'},
+            {'script': 'formula_applier', 'name': 'Formula Application', 'message': 'Applying calculation formulas...'},
+            {'script': 'pavement_input_with_internal', 'name': 'Geogrid Calculation', 'message': 'Calculating geogrid requirements...'},
+            {'script': 'final_sum_applier', 'name': 'Final Summary', 'message': 'Generating final summary...'}
+        ]
+        total_steps = len(processing_steps)
+        
+        # Initialize progress - starting first step (0% complete)
+        session_manager.update_progress(session_id, {
+            'current_step': processing_steps[0]['name'],
+            'current_step_number': 1,
+            'total_steps': total_steps,
+            'percentage': 0,
+            'message': processing_steps[0]['message'],
+            'completed_steps': 0,
+            'started_at': datetime.now()
+        })
         
         # Change to project root to ensure relative imports work
         original_cwd = os.getcwd()
@@ -83,25 +107,82 @@ def run_session_processing(session_id, session_data_dir, session_output_file):
             env['SESSION_OUTPUT_FILE'] = str(session_output_file)
             env['SESSION_ID'] = session_id
             
-            # Run sequential.py as a subprocess
-            result = subprocess.run(
-                [sys.executable, str(SEQUENTIAL_SCRIPT)],
-                capture_output=True,
-                text=True,
-                timeout=600,  # 10 minute timeout
-                env=env,
-                cwd=PROJECT_ROOT
-            )
+            # Run each script sequentially with proper progress tracking
+            for step_num, step_info in enumerate(processing_steps, 1):
+                script_name = step_info['script']
+                step_name = step_info['name']
+                step_message = step_info['message']
+                
+                print(f"Executing step {step_num}/{total_steps}: {step_name}")
+                
+                # Update progress to show current step (before execution)
+                if step_num > 1:  # For steps 2-8, update current step
+                    session_manager.update_progress(session_id, {
+                        'current_step': step_name,
+                        'current_step_number': step_num,
+                        'total_steps': total_steps,
+                        'percentage': int(((step_num - 1) / total_steps) * 100),  # Previous step completed
+                        'message': step_message,
+                        'completed_steps': step_num - 1,
+                        'last_completed_at': datetime.now()
+                    })
+                
+                # Determine script path based on name
+                if script_name in ['tcs_schedule', 'tcs_input', 'emb_height', 'pavement_input', 'constant_fill']:
+                    script_path = SRC_DIR / 'processor' / f'{script_name}.py'
+                else:
+                    script_path = SRC_DIR / 'internal' / f'{script_name}.py'
+                
+                # Run the script
+                result = subprocess.run(
+                    [sys.executable, str(script_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,  # 5 minute timeout per script
+                    env=env,
+                    cwd=PROJECT_ROOT
+                )
+                
+                if result.returncode != 0:
+                    error_msg = f"Script {step_name} failed with exit code {result.returncode}\n"
+                    if result.stdout:
+                        error_msg += f"STDOUT:\n{result.stdout}\n"
+                    if result.stderr:
+                        error_msg += f"STDERR:\n{result.stderr}\n"
+                    raise RuntimeError(error_msg)
+                
+                # Update progress AFTER step completion
+                progress_percentage = int((step_num / total_steps) * 100)
+                completion_message = f'Completed: {step_name}'
+                
+                # If this is the last step, show final message
+                if step_num == total_steps:
+                    completion_message = 'All calculations completed successfully!'
+                
+                session_manager.update_progress(session_id, {
+                    'current_step': step_name if step_num == total_steps else processing_steps[step_num]['name'] if step_num < total_steps else step_name,
+                    'current_step_number': step_num if step_num == total_steps else step_num + 1,
+                    'total_steps': total_steps,
+                    'percentage': progress_percentage,
+                    'message': completion_message,
+                    'completed_steps': step_num,
+                    'last_completed_at': datetime.now()
+                })
+                
+                print(f"✓ Completed step {step_num}/{total_steps}: {step_name}")
             
-            if result.returncode != 0:
-                error_msg = f"Processing failed with exit code {result.returncode}\n"
-                if result.stdout:
-                    error_msg += f"STDOUT:\n{result.stdout}\n"
-                if result.stderr:
-                    error_msg += f"STDERR:\n{result.stderr}\n"
-                raise RuntimeError(error_msg)
+            # Final completion update
+            session_manager.update_progress(session_id, {
+                'current_step': 'All steps completed',
+                'current_step_number': total_steps,
+                'total_steps': total_steps,
+                'percentage': 100,
+                'message': 'All calculations completed successfully!',
+                'completed_steps': total_steps,
+                'completed_at': datetime.now()
+            })
             
-            # Calculate execution time
+            # Calculate execution time and update session
             session = session_manager.get_session(session_id)
             if session and session['processing_info']['started_at']:
                 started_at = session['processing_info']['started_at']
@@ -330,6 +411,9 @@ def execute_calculation():
         # Copy template to session output directory
         shutil.copy2(TEMPLATE_FILE, session_output_file)
         
+        # Update status to processing immediately
+        session_manager.update_session_status(session_id, 'processing')
+        
         # Start processing in background thread
         thread = threading.Thread(
             target=run_session_processing,
@@ -419,7 +503,7 @@ def execute_calculation_sync():
 
 @app.route('/api/session-status/<session_id>', methods=['GET'])
 def get_session_status(session_id):
-    """Get session status"""
+    """Get session status with progress"""
     try:
         session_manager = SessionManager()
         session = session_manager.get_session(session_id)
@@ -435,7 +519,8 @@ def get_session_status(session_id):
             'has_error': session['error_info']['has_error'],
             'error_message': session['error_info']['error_message'],
             'input_files_count': len(session['input_files']),
-            'output_file': session['output_file']
+            'output_file': session['output_file'],
+            'progress': session.get('progress', {})  # Make sure this line includes progress
         }
         
         # Add processing info if available

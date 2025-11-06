@@ -41,6 +41,11 @@ class SessionManager:
                 'error_traceback': None,
                 'failed_script': None
             },
+            'zip_download_count': 0,
+            'files_generated': {
+                'main_carriageway': f"{session_id}_main_carriageway.xlsx",
+                'boq': f"{session_id}_BOQ.xlsx"
+            },
             'metadata': {},
             'progress': {}  # Ensure this field exists
         }

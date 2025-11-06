@@ -13,86 +13,62 @@ def log_debug(message):
 output_file = os.getenv('SESSION_OUTPUT_FILE', '')
 session_id = os.getenv('SESSION_ID', '')
 
-log_debug(f"=== BOQ POPULATOR WITH SHEET COPYING ===")
+log_debug(f"=== BOQ POPULATOR - SESSION FILENAME REFERENCES ===")
 
 # BOQ template and output paths
 boq_template_path = Path(__file__).parent.parent.parent / 'template' / 'BOQ.xlsx'
 session_output_dir = Path(output_file).parent
 boq_output_path = session_output_dir / f"{session_id}_BOQ.xlsx"
 
-log_debug(f"BOQ template exists: {boq_template_path.exists()}")
+# Use the actual session filename
+main_file_name = f"{session_id}_main_carriageway.xlsx"
 
 try:
-    # Copy BOQ template to session directory
+    # Copy BOQ template
     shutil.copy2(boq_template_path, boq_output_path)
-    log_debug("BOQ template copied successfully")
+    log_debug("BOQ template copied")
 
-    # Load both workbooks
+    # Load main file to build mapping
     main_wb = load_workbook(output_file)
+    main_sheet = main_wb['Abstract']
+    
+    # Build row mapping
+    row_mapping = {}
+    for row in range(4, main_sheet.max_row + 1):
+        item_code = main_sheet[f'J{row}'].value
+        if item_code:
+            row_mapping[str(item_code).strip()] = row
+
+    main_wb.close()
+    log_debug(f"Built mapping for {len(row_mapping)} items")
+
+    # Update BOQ file with session filename references
     boq_wb = load_workbook(boq_output_path)
-    
-    log_debug(f"Main sheets: {main_wb.sheetnames}")
-    log_debug(f"BOQ sheets before: {boq_wb.sheetnames}")
-
-    # Copy ALL sheets from main_carriageway to BOQ file
-    for sheet_name in main_wb.sheetnames:
-        if sheet_name not in boq_wb.sheetnames:  # Don't overwrite existing BOQ sheets
-            source_sheet = main_wb[sheet_name]
-            new_sheet = boq_wb.create_sheet(sheet_name)
-            
-            # Copy all cells with formatting
-            for row in source_sheet.iter_rows():
-                for cell in row:
-                    new_sheet[cell.coordinate].value = cell.value
-                    if cell.has_style:
-                        new_sheet[cell.coordinate]._style = cell._style
-            
-            log_debug(f"Copied sheet: {sheet_name}")
-
-    log_debug(f"BOQ sheets after: {boq_wb.sheetnames}")
-
-    # Now add formulas in BOQ sheet that reference the copied sheets
     boq_sheet = boq_wb['BOQ']
-    abstract_sheet_name = 'Abstract'  # Name of the copied main_carriageway sheet
     
-    # Create mapping formulas in BOQ sheet
     populated_count = 0
-    for row in range(3, boq_sheet.max_row + 1):
+    for row in range(3, min(boq_sheet.max_row + 1, 2200)):
         item_code = boq_sheet[f'A{row}'].value
         if item_code:
             item_code_str = str(item_code).strip()
-            
-            # Find the row in Abstract sheet that matches this item code
-            abstract_sheet = boq_wb[abstract_sheet_name]
-            found_row = None
-            
-            for abs_row in range(4, abstract_sheet.max_row + 1):
-                abs_item_code = abstract_sheet[f'J{abs_row}'].value
-                if abs_item_code and str(abs_item_code).strip() == item_code_str:
-                    found_row = abs_row
-                    break
-            
-            if found_row:
-                # Add Excel formulas that reference the Abstract sheet
-                # Column E in BOQ = Column F in Abstract
-                boq_sheet[f'E{row}'] = f"={abstract_sheet_name}!F{found_row}"
-                # Column F in BOQ = Column I in Abstract  
-                boq_sheet[f'F{row}'] = f"={abstract_sheet_name}!I{found_row}"
+            if item_code_str in row_mapping:
+                abstract_row = row_mapping[item_code_str]
+                
+                # Create external reference formulas with session filename
+                boq_sheet[f'E{row}'] = f"='[{main_file_name}]Abstract'!$F${abstract_row}"
+                boq_sheet[f'F{row}'] = f"='[{main_file_name}]Abstract'!$I${abstract_row}"
+                
                 populated_count += 1
-                log_debug(f"Added formulas for '{item_code_str}' at row {row}")
+                log_debug(f"Added ref for '{item_code_str}' -> '[{main_file_name}]Abstract'!$F${abstract_row}")
 
-    log_debug(f"Total formulas added: {populated_count}")
-
-    # Save BOQ file
     boq_wb.save(boq_output_path)
-    log_debug(f"BOQ file saved successfully")
-    
-    main_wb.close()
     boq_wb.close()
+    
+    log_debug(f"Added {populated_count} external reference formulas")
 
 except Exception as e:
     log_debug(f"ERROR: {str(e)}")
     import traceback
     log_debug(f"TRACEBACK: {traceback.format_exc()}")
 
-log_debug(f"=== BOQ POPULATOR FINISHED ===")
+log_debug("=== FINISHED ===")

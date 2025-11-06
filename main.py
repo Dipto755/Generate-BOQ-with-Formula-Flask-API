@@ -11,6 +11,8 @@ from flask_cors import CORS
 import traceback
 import shutil
 from datetime import datetime
+import zipfile
+from flask import send_file
 from dotenv import load_dotenv
 # Import session manager
 from api.session_manager import SessionManager
@@ -539,6 +541,11 @@ def get_session_status(session_id):
             'input_files_count': len(session['input_files']),
             'output_file': session['output_file'],
             'boq_file': session.get('boq_file'),
+            'zip_available': True,  # Add this
+            'files_in_zip': [
+                f"{session_id}_main_carriageway.xlsx",
+                f"{session_id}_BOQ.xlsx"
+            ],
             'progress': session.get('progress', {})  # Make sure this line includes progress
         }
         
@@ -625,6 +632,58 @@ def download_boq(session_id):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
     
+@app.route('/api/download-session/<session_id>', methods=['GET'])
+def download_session_zip(session_id):
+    """Download both files as ZIP"""
+    try:
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        if session['status'] != 'completed':
+            return jsonify({
+                'error': 'Calculation not completed', 
+                'message': f"Current status: {session['status']}"
+            }), 400
+        
+        session_output_dir = OUTPUT_DIR / 'sessions' / session_id
+        
+        # Check if both files exist
+        main_file = session_output_dir / f"{session_id}_main_carriageway.xlsx"
+        boq_file = session_output_dir / f"{session_id}_BOQ.xlsx"
+        
+        if not main_file.exists() or not boq_file.exists():
+            return jsonify({'error': 'Required files not found'}), 404
+        
+        # Create ZIP file
+        zip_path = session_output_dir / f"{session_id}_files.zip"
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            zipf.write(main_file, main_file.name)
+            zipf.write(boq_file, boq_file.name)
+        
+        # Update download counts
+        session_manager.sessions.update_one(
+            {'session_id': session_id},
+            {'$inc': {
+                'output_file.download_count': 1,
+                'boq_file.download_count': 1,
+                'zip_download_count': 1
+            }}
+        )
+        
+        return send_file(
+            zip_path,
+            mimetype='application/zip',
+            as_attachment=True,
+            download_name=f"{session_id}_BOQ_Files.zip"
+        )
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/sessions', methods=['GET'])
 def get_all_sessions():
     """Get all sessions with pagination"""
@@ -749,6 +808,12 @@ def root():
                 'path': '/api/download-boq/<session_id>',
                 'description': 'Download the generated BOQ file',
                 'usage': 'curl -X GET -O http://localhost:5000/api/download-boq/your_session_id'
+            },
+            'download_session_zip': {
+                'method': 'GET',
+                'path': '/api/download-session/<session_id>',
+                'description': 'Download both main carriageway and BOQ files as ZIP',
+                'usage': 'curl -X GET -O http://localhost:5000/api/download-session/your_session_id'
             }
         },
         'workflow': {
@@ -771,7 +836,11 @@ def root():
             'Maximum file size: 100 MB per file',
             'Allowed file types: .xlsx, .xls',
             'Session timeout: 10 minutes for processing',
-            'All files are stored temporarily and cleaned up automatically'
+            'All files are stored temporarily and cleaned up automatically',
+            'For best results, download the ZIP file containing both files',
+            'Extract both files to the same folder before opening the BOQ file',
+            'Excel may show security prompts about external links - click "Enable"',
+            'Keep both files in the same directory for formulas to work properly'
         ]
     }), 200
 

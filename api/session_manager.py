@@ -104,6 +104,16 @@ class SessionManager:
             }}
         )
     
+    def set_boq_file(self, session_id, boq_info):
+        """Set BOQ file information"""
+        self.sessions.update_one(
+            {'session_id': session_id},
+            {'$set': {
+                'boq_file': boq_info,
+                'updated_at': datetime.now()
+            }}
+        )
+    
     def set_processing_started(self, session_id):
         """Set processing start time"""
         self.sessions.update_one(

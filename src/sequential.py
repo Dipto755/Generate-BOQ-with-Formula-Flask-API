@@ -24,6 +24,8 @@ SCRIPTS = [
     # ('internal/recalc.py', 'Excel Formula Recalculation'),
     ('internal/pavement_input_with_internal.py', 'Pavement Input with Internal Processing'),
     ('internal/final_sum_applier.py', 'Final Sum Applier Processing'),
+    # ('processor/calculator.py', 'Formula Calculation'),
+    ('processor/boq_populator.py', 'BOQ Template Population'),
 ]
 
 def run_script(script_name, description):

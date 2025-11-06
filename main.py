@@ -12,10 +12,10 @@ import traceback
 import shutil
 from datetime import datetime
 from dotenv import load_dotenv
-load_dotenv()
 # Import session manager
 from api.session_manager import SessionManager
 
+load_dotenv()
 # Initialize Flask app
 app = Flask(__name__)
 CORS(app)
@@ -81,7 +81,9 @@ def run_session_processing(session_id, session_data_dir, session_output_file):
             {'script': 'constant_fill', 'name': 'Constant Values Processing', 'message': 'Applying constant values...'},
             {'script': 'formula_applier', 'name': 'Formula Application', 'message': 'Applying calculation formulas...'},
             {'script': 'pavement_input_with_internal', 'name': 'Geogrid Calculation', 'message': 'Calculating geogrid requirements...'},
-            {'script': 'final_sum_applier', 'name': 'Final Summary', 'message': 'Generating final summary...'}
+            {'script': 'final_sum_applier', 'name': 'Final Summary', 'message': 'Generating final summary...'},
+            # {'script': 'calculator', 'name': 'Formula Calculation', 'message': 'Calculating formula values...'},
+            {'script': 'boq_populator', 'name': 'BOQ Generation', 'message': 'Generating BOQ template...'},
         ]
         total_steps = len(processing_steps)
         
@@ -129,7 +131,7 @@ def run_session_processing(session_id, session_data_dir, session_output_file):
                     })
                 
                 # Determine script path based on name
-                if script_name in ['tcs_schedule', 'tcs_input', 'emb_height', 'pavement_input', 'constant_fill']:
+                if script_name in ['tcs_schedule', 'tcs_input', 'emb_height', 'pavement_input', 'constant_fill', 'calculator', 'boq_populator']:
                     script_path = SRC_DIR / 'processor' / f'{script_name}.py'
                 else:
                     script_path = SRC_DIR / 'internal' / f'{script_name}.py'
@@ -202,6 +204,21 @@ def run_session_processing(session_id, session_data_dir, session_output_file):
                     {'session_id': session_id},
                     {'$set': {'processing_info.execution_time_seconds': execution_time}}
                 )
+                
+                # Add BOQ file info to session
+                session_output_dir = session_output_file.parent
+                boq_output_path = session_output_dir / f"{session_id}_BOQ.xlsx"
+                if boq_output_path.exists():
+                    boq_info = {
+                        'filename': f"{session_id}_BOQ.xlsx",
+                        'file_path': str(boq_output_path),
+                        'generated_at': datetime.now(),
+                        'download_count': 0
+                    }
+                    session_manager.sessions.update_one(
+                        {'session_id': session_id},
+                        {'$set': {'boq_file': boq_info}}
+                    )
             
             print(f"✓ Session {session_id} processing completed successfully")
             
@@ -521,6 +538,7 @@ def get_session_status(session_id):
             'error_message': session['error_info']['error_message'],
             'input_files_count': len(session['input_files']),
             'output_file': session['output_file'],
+            'boq_file': session.get('boq_file'),
             'progress': session.get('progress', {})  # Make sure this line includes progress
         }
         
@@ -565,6 +583,43 @@ def download_file(session_id):
             mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             as_attachment=True,
             download_name=session['output_file']['filename']
+        )
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+@app.route('/api/download-boq/<session_id>', methods=['GET'])
+def download_boq(session_id):
+    """Download BOQ file for session"""
+    try:
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        if not session.get('boq_file'):
+            return jsonify({
+                'error': 'BOQ file not generated',
+                'message': 'BOQ file has not been generated for this session'
+            }), 404
+        
+        boq_file_path = session['boq_file']['file_path']
+        
+        if not os.path.exists(boq_file_path):
+            return jsonify({'error': 'BOQ file not found'}), 404
+        
+        # Increment download count
+        session_manager.sessions.update_one(
+            {'session_id': session_id},
+            {'$inc': {'boq_file.download_count': 1}}
+        )
+        
+        return send_file(
+            boq_file_path,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=session['boq_file']['filename']
         )
         
     except Exception as e:
@@ -688,6 +743,12 @@ def root():
                 'path': '/api/download-file/<session_id>',
                 'description': 'Download the generated BOQ file (only available after completion)',
                 'usage': 'curl -X GET -O http://localhost:5000/api/download-file/your_session_id'
+            },
+            'download_boq_file': {
+                'method': 'GET',
+                'path': '/api/download-boq/<session_id>',
+                'description': 'Download the generated BOQ file',
+                'usage': 'curl -X GET -O http://localhost:5000/api/download-boq/your_session_id'
             }
         },
         'workflow': {
@@ -697,6 +758,7 @@ def root():
                 '3. Start calculation using /api/execute-calculation with session_id',
                 '4. Monitor progress using /api/session-status/<session_id>',
                 '5. Download result using /api/download-file/<session_id> when status is "completed"'
+                '6. Download BOQ file using /api/download-boq/<session_id>'
             ]
         },
         'session_states': {
@@ -751,6 +813,7 @@ if __name__ == '__main__':
     print("  POST /api/execute-calculation-sync        - Start calculation (synchronous)")
     print("  GET  /api/session-status/<id>             - Check session status")
     print("  GET  /api/download-file/<id>              - Download result")
+    print("  GET  /api/download-boq/<id>               - Download BOQ file")
     print("="*80 + "\n")
     
     # Run Flask app

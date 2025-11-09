@@ -1,0 +1,227 @@
+{
+  "2.03.ii.A": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$4",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$4",
+    "excel_row": 20
+  },
+  "3.06": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$6+'[{main_carriageway_file}]Abstract'!$D$34+'[{main_carriageway_file}]Abstract'!$E$34+'[{main_carriageway_file}]Abstract'!$F$34+'[{main_carriageway_file}]Abstract'!$F$40",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$6+'[{main_carriageway_file}]Abstract'!$G$34+'[{main_carriageway_file}]Abstract'!$H$34+'[{main_carriageway_file}]Abstract'!$I$34+'[{main_carriageway_file}]Abstract'!$I$40",
+    "excel_row": 89
+  },
+  "3.16": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$5",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$5",
+    "excel_row": 119
+  },
+  "3.18": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$9+'[{main_carriageway_file}]Abstract'!$F$11",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$9+'[{main_carriageway_file}]Abstract'!$I$11",
+    "excel_row": 121
+  },
+  "3.20.I": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$7",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$7",
+    "excel_row": 124
+  },
+  "3.23": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$57",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$57",
+    "excel_row": 128
+  },
+  "4.01.A.iii": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$13+'[{main_carriageway_file}]Abstract'!$F$8",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$13+'[{main_carriageway_file}]Abstract'!$I$8",
+    "excel_row": 149
+  },
+  "4.08.A.i": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$12",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$12",
+    "excel_row": 194
+  },
+  "4.14.A": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$18",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$18",
+    "excel_row": 227
+  },
+  "4.15": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$14",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$14",
+    "excel_row": 229
+  },
+  "4.17": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$10",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$10",
+    "excel_row": 231
+  },
+  "4.19": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$27",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$27",
+    "excel_row": 233
+  },
+  "4.22": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$17",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$17",
+    "excel_row": 242
+  },
+  "5.01.A.i": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$19",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$19",
+    "excel_row": 246
+  },
+  "5.02.i": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$20",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$20",
+    "excel_row": 252
+  },
+  "5.03.i": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$22",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$22",
+    "excel_row": 256
+  },
+  "5.04.i": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$23",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$23",
+    "excel_row": 259
+  },
+  "5.04.ii": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$26",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$26",
+    "excel_row": 260
+  },
+  "5.05.i": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$25",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$25",
+    "excel_row": 262
+  },
+  "5.07": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$24",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$24",
+    "excel_row": 267
+  },
+  "5.13": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$21",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$21",
+    "excel_row": 280
+  },
+  "6.01": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$15",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$15",
+    "excel_row": 311
+  },
+  "6.02": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$16",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$16",
+    "excel_row": 312
+  },
+  "7.04.i.B": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$43+'[{main_carriageway_file}]Abstract'!$F$65",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$43",
+    "excel_row": 330
+  },
+  "7.04.i.B.2": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$42",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$42",
+    "excel_row": 331
+  },
+  "7.09": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$44",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$44",
+    "excel_row": 354
+  },
+  "7.14 B": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$45",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$45",
+    "excel_row": 391
+  },
+  "7.15": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$46",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$46",
+    "excel_row": 392
+  },
+  "8.01.A.i": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$53",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$52",
+    "excel_row": 402
+  },
+  "8.01.A.ii": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$52",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$52",
+    "excel_row": 403
+  },
+  "8.02.A.i": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$64",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$63",
+    "excel_row": 406
+  },
+  "8.02.A.ii": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$63",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$63",
+    "excel_row": 407
+  },
+  "8.13": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$54+'[{main_carriageway_file}]Abstract'!$F$55",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$54+'[{main_carriageway_file}]Abstract'!$I$55",
+    "excel_row": 460
+  },
+  "8.18": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$50",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$50",
+    "excel_row": 468
+  },
+  "8.21": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$51",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$51",
+    "excel_row": 471
+  },
+  "8.23.A": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$48+'[{main_carriageway_file}]Abstract'!$F$49",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$48+'[{main_carriageway_file}]Abstract'!$I$49",
+    "excel_row": 480
+  },
+  "9.06.A.II": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$E$35+'[{main_carriageway_file}]Abstract'!$F$35+'[{main_carriageway_file}]Abstract'!$F$41",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$H$35+'[{main_carriageway_file}]Abstract'!$I$35+'[{main_carriageway_file}]Abstract'!$I$41",
+    "excel_row": 620
+  },
+  "9.06.E.II": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$E$36+'[{main_carriageway_file}]Abstract'!$F$36",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$H$36+'[{main_carriageway_file}]Abstract'!$I$36",
+    "excel_row": 632
+  },
+  "9.07": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$E$37+'[{main_carriageway_file}]Abstract'!$F$37",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$H$37+'[{main_carriageway_file}]Abstract'!$I$37",
+    "excel_row": 633
+  },
+  "15.14": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$38",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$38",
+    "excel_row": 1439
+  },
+  "16.04A": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$58",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$58",
+    "excel_row": 1468
+  },
+  "16.05": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$59",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$59",
+    "excel_row": 1470
+  },
+  "22.01": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$60",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$60",
+    "excel_row": 1582
+  },
+  "22.02": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$61",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$61",
+    "excel_row": 1583
+  },
+  "22.03": {
+    "column_E": "='[{main_carriageway_file}]Abstract'!$F$62",
+    "column_F": "='[{main_carriageway_file}]Abstract'!$I$62",
+    "excel_row": 1584
+  }
+}

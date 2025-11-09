@@ -12,7 +12,6 @@ import traceback
 import shutil
 from datetime import datetime
 import zipfile
-from flask import send_file
 from dotenv import load_dotenv
 # Import session manager
 from api.session_manager import SessionManager
@@ -822,8 +821,9 @@ def root():
                 '2. Get session_id from upload response',
                 '3. Start calculation using /api/execute-calculation with session_id',
                 '4. Monitor progress using /api/session-status/<session_id>',
-                '5. Download result using /api/download-file/<session_id> when status is "completed"'
-                '6. Download BOQ file using /api/download-boq/<session_id>'
+                '5. Download result using /api/download-file/<session_id> when status is "completed"',
+                '6. Download BOQ file using /api/download-boq/<session_id>',
+                '7. Download session ZIP file using /api/download-session/<session_id>'
             ]
         },
         'session_states': {
@@ -854,6 +854,15 @@ if __name__ == '__main__':
     print(f"✓ MongoDB URI: {mongodb_uri}")
     print(f"✓ Database: {db_name}")
     
+    # Test MongoDB connection
+    try:
+        session_manager = SessionManager()
+        # Ping the MongoDB server
+        session_manager.client.admin.command('ping')
+        print("✓ MongoDB connection test: SUCCESS")
+    except Exception as e:
+        print(f"⚠ MongoDB connection test: FAILED - {str(e)}")
+    
     # Ensure directories exist on startup
     ensure_directories()
     
@@ -883,6 +892,7 @@ if __name__ == '__main__':
     print("  GET  /api/session-status/<id>             - Check session status")
     print("  GET  /api/download-file/<id>              - Download result")
     print("  GET  /api/download-boq/<id>               - Download BOQ file")
+    print("  GET  /api/download-session/<id>           - Download session ZIP file")
     print("="*80 + "\n")
     
     # Run Flask app

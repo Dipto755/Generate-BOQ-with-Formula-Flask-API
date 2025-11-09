@@ -21,7 +21,7 @@ if sys.platform == "win32":
 # NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # Use session directories from environment, fallback to original paths
-output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway.xlsx'))
+output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway_and_boq.xlsx'))
 
 MAIN_CARRIAGEWAY_FILE = output_file
 OUTPUT_EXCEL = output_file

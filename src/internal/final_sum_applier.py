@@ -30,7 +30,7 @@ class FinalSumApplier:
                 self.output_excel_path = Path(session_output_file)
             else:
                 current_dir = Path(__file__).parent
-                self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
+                self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway_and_boq.xlsx"
         else:
             self.output_excel_path = Path(output_excel_path)
     
@@ -192,11 +192,11 @@ def main():
     """Command line interface for applying final sum formulas."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Apply final sum formula templates to output/main_carriageway.xlsx")
+    parser = argparse.ArgumentParser(description="Apply final sum formula templates to output/main_carriageway_and_boq.xlsx")
     parser.add_argument("--ref-column", default="D", help="Reference column for auto detection (default: D)")
     parser.add_argument("--start-row", type=int, default=7, help="Starting row to check from (default: 7)")
     parser.add_argument("--template", help="Path to formula_final_sum_template.json")
-    parser.add_argument("--output", help="Path to output main_carriageway.xlsx file")
+    parser.add_argument("--output", help="Path to output main_carriageway_and_boq.xlsx file")
     parser.add_argument("--end-row", type=int, help="Custom end row for {row} replacement")
     parser.add_argument("--target-offset", type=int, default=3, help="Offset from end row for target row (default: 3)")
     

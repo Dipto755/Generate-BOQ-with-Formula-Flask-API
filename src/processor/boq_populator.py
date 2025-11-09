@@ -1,8 +1,6 @@
 import json
 import os
 from pathlib import Path
-import shutil
-import pandas as pd
 from openpyxl import load_workbook
 
 def log_debug(message):
@@ -15,17 +13,13 @@ def log_debug(message):
 output_file = os.getenv('SESSION_OUTPUT_FILE', '')
 session_id = os.getenv('SESSION_ID', '')
 
-log_debug(f"=== BOQ POPULATOR - FORMULA WRITING WITH PANDAS + OPENPYXL ===")
+log_debug(f"=== BOQ POPULATOR - FORMULA WRITING TO MERGED TEMPLATE ===")
 
 # File paths
 project_root = Path(__file__).parent.parent.parent
 boq_formula_json_path = project_root / 'boq_formula_mapping.json'
-boq_template_path = project_root / 'template' / 'BOQ.xlsx'
 session_output_dir = Path(output_file).parent
-boq_output_path = session_output_dir / f"{session_id}_BOQ.xlsx"
-
-# Use the actual session filename
-main_file_name = f"{session_id}_main_carriageway.xlsx"
+boq_output_path = session_output_dir / f"{session_id}_main_carriageway_and_boq.xlsx"
 
 try:
     # Load formula mapping from JSON
@@ -38,11 +32,12 @@ try:
     
     log_debug(f"Loaded formula mapping with {len(formula_mapping)} items")
 
-    # Copy BOQ template
-    shutil.copy2(boq_template_path, boq_output_path)
-    log_debug("BOQ template copied")
+    # Check if the merged template file exists
+    if not boq_output_path.exists():
+        log_debug(f"ERROR: Merged template file not found at {boq_output_path}")
+        exit(1)
 
-    # Load the workbook with openpyxl to preserve formatting
+    # Load the existing merged workbook
     wb = load_workbook(boq_output_path)
     sheet = wb['BOQ']
     
@@ -52,25 +47,23 @@ try:
         formula_E = formula_data['column_E']
         formula_F = formula_data['column_F']
         
-        # Replace placeholder with actual session filename
+        # Write formulas to the BOQ sheet
         if formula_E:
-            formula_E = formula_E.replace('{main_carriageway_file}', main_file_name)
             sheet[f'E{excel_row}'] = formula_E
         
         if formula_F:
-            formula_F = formula_F.replace('{main_carriageway_file}', main_file_name)
             sheet[f'F{excel_row}'] = formula_F
         
         populated_count += 1
         
-
-        log_debug(f"Row {excel_row} ('{item_code}'): E={formula_E}, F={formula_F}")
+        if populated_count % 50 == 0:
+            log_debug(f"Processed {populated_count} items...")
 
     # Save the workbook
     wb.save(boq_output_path)
     wb.close()
     
-    log_debug(f"Written {populated_count} formulas to BOQ with preserved formatting")
+    log_debug(f"Written {populated_count} formulas to merged template")
 
 except Exception as e:
     log_debug(f"ERROR: {str(e)}")

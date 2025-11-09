@@ -23,7 +23,7 @@ if sys.platform == "win32":
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # Use session directories from environment, fallback to original paths
 data_dir = os.getenv('SESSION_DATA_DIR', os.path.join(script_dir, '..', '..', 'data'))
-output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway.xlsx'))
+output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway_and_boq.xlsx'))
 
 PAVEMENT_INPUT_FILE = os.path.join(data_dir, 'Pavement Input.xlsx')
 MAIN_CARRIAGEWAY_FILE = output_file
@@ -134,7 +134,7 @@ def find_last_row_with_data(ws, column_letter):
 
 def calculate_geogrid_columns(main_carriageway_file, conditions, output_file):
     """
-    Reads main_carriageway.xlsx and calculates geogrid columns based on conditions
+    Reads main_carriageway_and_boq.xlsx and calculates geogrid columns based on conditions
     Updates only columns KY, KZ, LA, LB without touching other columns
     """
     print("\n" + "="*80)
@@ -248,7 +248,7 @@ def main():
     print("="*80)
     print("Configuration:")
     print("  • Pavement_Input.xlsx: Check for Geogrid conditions")
-    print("  • main_carriageway.xlsx: Calculate columns KY, KZ, LA, LB")
+    print("  • main_carriageway_and_boq.xlsx: Calculate columns KY, KZ, LA, LB")
     print("="*80 + "\n")
     
     try:

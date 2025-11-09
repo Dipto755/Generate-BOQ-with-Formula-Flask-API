@@ -50,26 +50,26 @@ def extract_boq_formulas():
                 formula_F = formula_F_cell.value if formula_F_cell.value is not None else None
                 
                 def process_formula(formula):
-                    """Process a formula to replace file references and add proper quoting"""
+                    """Process a formula to remove ALL file references and keep only sheet names"""
                     if not formula or not isinstance(formula, str) or '!' not in formula:
                         return formula
                     
-                    # Replace specific filename with placeholder
-                    processed_formula = formula.replace('[7]', '[{main_carriageway_file}]')
+                    # Remove ALL file references [7] from the entire formula
+                    # First remove the [7] filename references
+                    processed_formula = formula.replace('[7]', '')
                     
-                    # Add single quotes around ALL external references
-                    if processed_formula.startswith('='):
-                        # Find ALL external references in the formula
-                        # Pattern to match [file]sheet!cell_reference
-                        pattern = r'(\[[^\]]+\][^!]+)!([^+\-*/()=]+)'
-                        
-                        def replace_with_quotes(match):
-                            file_sheet_part = match.group(1)  # [file]sheet part
-                            cell_part = match.group(2)        # cell reference part
-                            return f"'{file_sheet_part}'!{cell_part}"
-                        
-                        # Apply the replacement to ALL occurrences
-                        processed_formula = re.sub(pattern, replace_with_quotes, processed_formula)
+                    # Then handle any remaining external references with different patterns
+                    # Pattern to match [any_file]sheet!cell_reference and extract just sheet!cell_reference
+                    pattern = r'\[([^\]]+)\]([^!]+)!([^+\-*/()=]+)'
+                    
+                    def remove_filename(match):
+                        file_part = match.group(1)  # This part is removed
+                        sheet_part = match.group(2)  # Keep the sheet name
+                        cell_part = match.group(3)   # Keep the cell reference
+                        return f"{sheet_part}!{cell_part}"
+                    
+                    # Apply the replacement to ALL occurrences throughout the formula
+                    processed_formula = re.sub(pattern, remove_filename, processed_formula)
                     
                     return processed_formula
                 

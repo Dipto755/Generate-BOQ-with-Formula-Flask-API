@@ -41,7 +41,7 @@ REQUIRED_FILES = {
 }
 
 # Template file
-TEMPLATE_FILE = TEMPLATE_DIR / 'main_carriageway.xlsx'
+TEMPLATE_FILE = TEMPLATE_DIR / 'main_carriageway_and_boq.xlsx'
 
 # Sequential script path
 SEQUENTIAL_SCRIPT = SRC_DIR / 'sequential.py'
@@ -424,7 +424,7 @@ def execute_calculation():
         # Create session output file
         session_output_dir = OUTPUT_DIR / 'sessions' / session_id
         session_output_dir.mkdir(parents=True, exist_ok=True)
-        output_filename = f"{session_id}_main_carriageway.xlsx"
+        output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
         session_output_file = session_output_dir / output_filename
         
         # Copy template to session output directory
@@ -479,7 +479,7 @@ def execute_calculation_sync():
         # Create session output file
         session_output_dir = OUTPUT_DIR / 'sessions' / session_id
         session_output_dir.mkdir(parents=True, exist_ok=True)
-        output_filename = f"{session_id}_main_carriageway.xlsx"
+        output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
         session_output_file = session_output_dir / output_filename
         
         # Copy template to session output directory

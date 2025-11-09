@@ -14,8 +14,8 @@ if sys.platform == "win32":
 script_dir = os.path.dirname(os.path.abspath(__file__))
 # Use session directories from environment, fallback to original paths
 data_dir = os.getenv('SESSION_DATA_DIR', os.path.join(script_dir, '..', '..', 'data'))
-output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway.xlsx'))
-template_file = os.path.join(script_dir, '..', '..', 'template', 'main_carriageway.xlsx')
+output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway_and_boq.xlsx'))
+template_file = os.path.join(script_dir, '..', '..', 'template', 'main_carriageway_and_boq.xlsx')
 
 input_file = os.path.join(data_dir, 'TCS Schedule.xlsx')
 output_dir = os.path.dirname(output_file)

@@ -30,7 +30,7 @@ class FormulaApplier:
                 self.input_excel_path = Path(session_output_file)
             else:
                 current_dir = Path(__file__).parent
-                self.input_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
+                self.input_excel_path = current_dir.parent.parent / "output" / "main_carriageway_and_boq.xlsx"
         else:
             self.input_excel_path = Path(input_excel_path)
 
@@ -40,7 +40,7 @@ class FormulaApplier:
                 self.output_excel_path = Path(session_output_file)
             else:
                 current_dir = Path(__file__).parent
-                self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway.xlsx"
+                self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway_and_boq.xlsx"
         else:
             self.output_excel_path = Path(output_excel_path)
         
@@ -72,7 +72,7 @@ class FormulaApplier:
         
         if not self.input_excel_path.exists():
             # Try alternative path - one level up from src/internal to src/data/
-            alternative_path = Path(__file__).parent.parent / "data" / "main_carriageway.xlsx"
+            alternative_path = Path(__file__).parent.parent / "data" / "main_carriageway_and_boq.xlsx"
             print(f"Trying alternative path: {alternative_path}")
             print(f"Alternative path exists: {alternative_path.exists()}")
             
@@ -229,12 +229,12 @@ def main():
     """Command line interface for applying formulas."""
     import argparse
     
-    parser = argparse.ArgumentParser(description="Apply formula templates to output/main_carriageway.xlsx")
+    parser = argparse.ArgumentParser(description="Apply formula templates to output/main_carriageway_and_boq.xlsx")
     parser.add_argument("--ref-column", default="D", help="Reference column for auto detection")
     parser.add_argument("--start-row", type=int, default=7, help="Starting row for output (default: 7)")
     parser.add_argument("--template", help="Path to formula template JSON")
-    parser.add_argument("--input", help="Path to input main_carriageway.xlsx file")
-    parser.add_argument("--output", help="Path to output main_carriageway.xlsx file")
+    parser.add_argument("--input", help="Path to input main_carriageway_and_boq.xlsx file")
+    parser.add_argument("--output", help="Path to output main_carriageway_and_boq.xlsx file")
     
     args = parser.parse_args()
     

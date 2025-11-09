@@ -1,6 +1,6 @@
 """
 Constant Fill Processor
-Fills specific columns in main_carriageway.xlsx with constant values
+Fills specific columns in main_carriageway_and_boq.xlsx with constant values
 """
 
 import pandas as pd
@@ -51,7 +51,7 @@ CONSTANTS = [
 
 def fill_constant_columns(main_carriageway_file, constants, output_file):
     """
-    Reads main_carriageway.xlsx and fills specified columns with constant values
+    Reads main_carriageway_and_boq.xlsx and fills specified columns with constant values
     """
     print("="*80)
     print("CONSTANT FILL PROCESSOR")
@@ -59,7 +59,7 @@ def fill_constant_columns(main_carriageway_file, constants, output_file):
     
     # Read the main carriageway file
     df = pd.read_excel(main_carriageway_file, sheet_name='Quantity', skiprows=6, header=None)
-    print("[OK] Read main_carriageway.xlsx:", len(df), "rows")
+    print("[OK] Read main_carriageway_and_boq.xlsx:", len(df), "rows")
     print("  Current columns:", len(df.columns))
     
     # Remove empty rows

@@ -43,8 +43,7 @@ class SessionManager:
             },
             'zip_download_count': 0,
             'files_generated': {
-                'main_carriageway': f"{session_id}_main_carriageway.xlsx",
-                'boq': f"{session_id}_BOQ.xlsx"
+                'main_carriageway_and_boq': f"{session_id}_main_carriageway_and_boq.xlsx"
             },
             'metadata': {},
             'progress': {}  # Ensure this field exists

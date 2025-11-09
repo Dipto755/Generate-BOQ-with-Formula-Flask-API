@@ -1,7 +1,7 @@
 # BOQ Generation API Usage Guide
 
 ## Overview
-This Flask API accepts 4 Excel files and generates a populated `main_carriageway.xlsx` file with calculated BOQ (Bill of Quantities) data.
+This Flask API accepts 4 Excel files and generates a populated `main_carriageway_and_boq.xlsx` file with calculated BOQ (Bill of Quantities) data.
 
 ## Endpoints
 
@@ -44,7 +44,7 @@ curl -X POST http://localhost:5000/api/generate-boq \
   -F "tcs_input=@TCS Input.xlsx" \
   -F "emb_height=@Emb Height.xlsx" \
   -F "pavement_input=@Pavement Input.xlsx" \
-  --output main_carriageway.xlsx
+  --output main_carriageway_and_boq.xlsx
 ```
 
 ### Method 2: Using 'files' Field (Auto-Matching)
@@ -57,7 +57,7 @@ curl -X POST http://localhost:5000/api/generate-boq \
   -F "files=@TCS Input.xlsx" \
   -F "files=@Emb Height.xlsx" \
   -F "files=@Pavement Input.xlsx" \
-  --output main_carriageway.xlsx
+  --output main_carriageway_and_boq.xlsx
 ```
 
 **Note:** For Method 2, ensure your files are named clearly (containing keywords like "tcs", "schedule", "input", "emb", "height", "pavement").
@@ -79,7 +79,7 @@ files = {
 response = requests.post(url, files=files)
 
 if response.status_code == 200:
-    with open('main_carriageway.xlsx', 'wb') as f:
+    with open('main_carriageway_and_boq.xlsx', 'wb') as f:
         f.write(response.content)
     print("BOQ generated successfully!")
 else:
@@ -110,7 +110,7 @@ fetch('http://localhost:5000/api/generate-boq', {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'main_carriageway.xlsx';
+    a.download = 'main_carriageway_and_boq.xlsx';
     a.click();
 })
 .catch(error => {
@@ -142,8 +142,8 @@ fetch('http://localhost:5000/api/generate-boq', {
 
 ### Success Response (200 OK)
 - Content-Type: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-- Body: Binary Excel file (`main_carriageway.xlsx`)
-- Content-Disposition: `attachment; filename=main_carriageway.xlsx`
+- Body: Binary Excel file (`main_carriageway_and_boq.xlsx`)
+- Content-Disposition: `attachment; filename=main_carriageway_and_boq.xlsx`
 
 ### Error Response (400/500)
 - Content-Type: `application/json`
@@ -187,7 +187,7 @@ The API runs the following processing steps in sequence:
 ## Troubleshooting
 
 ### Error: "Template file not found"
-- Ensure `template/main_carriageway.xlsx` exists in the project root
+- Ensure `template/main_carriageway_and_boq.xlsx` exists in the project root
 
 ### Error: "Could not identify all required files"
 - Use specific form field names (Method 1) for reliable matching

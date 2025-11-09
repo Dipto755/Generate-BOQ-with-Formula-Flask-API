@@ -180,16 +180,16 @@ def create_tcs_dictionary(tcs_input_file):
 
 
 # ============================================================================
-# STEP 2: Populate main_carriageway.xlsx with Specifications
+# STEP 2: Populate main_carriageway_and_boq.xlsx with Specifications
 # ============================================================================
 
 def populate_specifications(main_carriageway_file, tcs_dict, output_file):
     """
-    Reads main_carriageway.xlsx Quantity sheet from row 7 onwards
+    Reads main_carriageway_and_boq.xlsx Quantity sheet from row 7 onwards
     Adds TCS specifications and writes back starting from row 7
     """
     print("\n" + "="*80)
-    print("STEP 2: Populating main_carriageway.xlsx (Quantity sheet)")
+    print("STEP 2: Populating main_carriageway_and_boq.xlsx (Quantity sheet)")
     print("="*80)
     
     # Read data from row 7 onwards (skiprows=6 to skip rows 1-6)

@@ -23,7 +23,9 @@ Generate-BOQ-with-Formula-Flask-API/
 │   └── tcs_specifications.json    # TCS specifications configuration
 │
 ├── template/                       # Template directory for cleaned Excel files
-│   └── main_carriageway.xlsx      # Cleaned main carriageway template
+│   ├── main_carriageway.xlsx      # Legacy main carriageway template (deprecated)
+│   ├── BOQ.xlsx                   # Legacy BOQ template (deprecated)
+│   └── main_carriageway_and_boq.xlsx # Combined main carriageway and BOQ template
 │
 └── src/                           # Source code directory
     ├── __init__.py                # Package initialization
@@ -92,7 +94,9 @@ Generate-BOQ-with-Formula-Flask-API/
 ### Template Directory (`template/`)
 
 #### Excel Templates
-- **main_carriageway.xlsx**: Cleaned template file for main carriageway calculations
+- **main_carriageway.xlsx**: Legacy cleaned template file for main carriageway calculations (deprecated)
+- **BOQ.xlsx**: Legacy BOQ template file (deprecated)
+- **main_carriageway_and_boq.xlsx**: Combined main carriageway and BOQ template (current)
 
 ### Source Code (`src/`)
 

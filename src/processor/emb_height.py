@@ -96,18 +96,18 @@ def create_emb_height_dictionary(emb_height_file):
 
 
 # ============================================================================
-# STEP 2: Populate main_carriageway.xlsx with Embankment Heights
+# STEP 2: Populate main_carriageway_and_boq.xlsx with Embankment Heights
 # ============================================================================
 
 def populate_embankment_heights(main_carriageway_file, emb_dict, output_file):
     """
-    Reads main_carriageway.xlsx Quantity sheet from row 7 onwards
+    Reads main_carriageway_and_boq.xlsx Quantity sheet from row 7 onwards
     Matches Column A with dict keys
     Populates columns AQ (index 42) and AR (index 43) with embankment heights
     Writes back starting from row 7
     """
     print("\n" + "="*80)
-    print("STEP 2: Populating main_carriageway.xlsx (Quantity sheet)")
+    print("STEP 2: Populating main_carriageway_and_boq.xlsx (Quantity sheet)")
     print("="*80)
     
     # Read data from row 7 onwards (skiprows=6 to skip rows 1-6)
@@ -193,7 +193,7 @@ def main():
     print("="*80)
     print("Configuration:")
     print("  • Emb_Height.xlsx: Read from Excel row 5 (Col A, E, F)")
-    print("  • main_carriageway.xlsx: Quantity sheet, starting row 7")
+    print("  • main_carriageway_and_boq.xlsx: Quantity sheet, starting row 7")
     print("  • Output: Populate columns AQ and AR")
     print("="*80 + "\n")
     

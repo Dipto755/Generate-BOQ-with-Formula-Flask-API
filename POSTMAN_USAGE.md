@@ -48,7 +48,7 @@ This document explains how to use the BOQ Generation API Postman collection to t
   - `tcs_input`: TCS Input.xlsx file
   - `emb_height`: Emb Height.xlsx file
   - `pavement_input`: Pavement Input.xlsx file
-- **Expected Response**: Downloads `main_carriageway.xlsx` file
+- **Expected Response**: Downloads `main_carriageway_and_boq.xlsx` file
 
 #### How to Use:
 1. Click on "Generate BOQ - Specific Form Fields"
@@ -63,7 +63,7 @@ This document explains how to use the BOQ Generation API Postman collection to t
 - **Body Type**: form-data
 - **Fields**:
   - `files`: All 4 Excel files (select multiple files)
-- **Expected Response**: Downloads `main_carriageway.xlsx` file
+- **Expected Response**: Downloads `main_carriageway_and_boq.xlsx` file
 
 #### How to Use:
 1. Click on "Generate BOQ - Generic Files Upload"
@@ -116,7 +116,7 @@ You can modify this if your API is running on a different host or port.
 When the BOQ generation is successful, you'll receive:
 - **Status**: 200 OK
 - **Content-Type**: `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
-- **Body**: Binary file download named `main_carriageway.xlsx`
+- **Body**: Binary file download named `main_carriageway_and_boq.xlsx`
 
 ## Common Error Responses
 
@@ -159,7 +159,7 @@ When the BOQ generation is successful, you'll receive:
 - Ensure `python main.py` was executed successfully
 
 ### Processing Issues
-- Check that the `template/main_carriageway.xlsx` file exists
+- Check that the `template/main_carriageway_and_boq.xlsx` file exists
 - Verify all required Python packages are installed
 - Check the server console for detailed error messages
 

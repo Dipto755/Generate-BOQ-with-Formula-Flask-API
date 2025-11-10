@@ -21,14 +21,18 @@ class SessionManager:
         """Generate session ID in format YYYYMMDD_HHMMSS"""
         return datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    def create_session(self, session_id):
-        """Create new session"""
+    def create_session(self, session_id=None):
+        """Create new session - generates session_id if not provided"""
+        if session_id is None:
+            session_id = self.generate_session_id()
+        
         session_data = {
             'session_id': session_id,
             'status': 'uploaded',
             'created_at': datetime.now(),
             'updated_at': datetime.now(),
-            'input_files': [],
+            'input_files': [],  # This will store file info objects
+            'uploaded_files': {},  # This stores the categorized files
             'output_file': None,
             'processing_info': {
                 'started_at': None,
@@ -46,7 +50,7 @@ class SessionManager:
                 'main_carriageway_and_boq': f"{session_id}_main_carriageway_and_boq.xlsx"
             },
             'metadata': {},
-            'progress': {}  # Ensure this field exists
+            'progress': {}
         }
         self.sessions.insert_one(session_data)
         return session_data
@@ -135,3 +139,79 @@ class SessionManager:
     def session_exists(self, session_id):
         """Check if session exists"""
         return self.sessions.find_one({'session_id': session_id}) is not None
+    
+    def update_session_data(self, session_id, data):
+        """Update session with custom data (for GCS paths, etc.)"""
+        self.sessions.update_one(
+            {'session_id': session_id},
+            {'$set': {
+                **data,
+                'updated_at': datetime.now()
+            }}
+        )
+    
+    def delete_session(self, session_id):
+        """Delete a session (for cleanup)"""
+        result = self.sessions.delete_one({'session_id': session_id})
+        return result.deleted_count > 0
+    
+    def get_all_sessions(self, limit=10, skip=0, sort_by='created_at', sort_order=-1):
+        """
+        Get all sessions with pagination
+        
+        Args:
+            limit: Number of sessions to return
+            skip: Number of sessions to skip
+            sort_by: Field to sort by (default: created_at)
+            sort_order: 1 for ascending, -1 for descending
+        
+        Returns:
+            List of sessions and total count
+        """
+        sessions_cursor = self.sessions.find().sort(sort_by, sort_order)
+    
+        sessions = []
+        for session in sessions_cursor:
+            # Count files from uploaded_files instead of input_files
+            uploaded_files_count = len(session.get('uploaded_files', {}))
+            input_files_count = len(session.get('input_files', []))
+            
+            # Use uploaded_files count if available, otherwise fall back to input_files
+            files_count = uploaded_files_count if uploaded_files_count > 0 else input_files_count
+            
+            # Convert MongoDB document to JSON-serializable format
+            session_data = {
+                'session_id': session['session_id'],
+                'status': session['status'],
+                'created_at': session['created_at'].isoformat() if session.get('created_at') else None,
+                'updated_at': session['updated_at'].isoformat() if session.get('updated_at') else None,
+                'input_files_count': files_count,  # Use the correct count
+                'has_error': session.get('error_info', {}).get('has_error', False),
+                'error_message': session.get('error_info', {}).get('error_message'),
+                'output_file': session.get('output_file'),
+                'boq_file': session.get('boq_file'),
+                'zip_download_count': session.get('zip_download_count', 0),
+                'uploaded_files': session.get('uploaded_files', {})
+            }
+            
+            # Add processing info if available
+            if session.get('processing_info'):
+                session_data['processing_info'] = {
+                    'started_at': session['processing_info'].get('started_at').isoformat() if session['processing_info'].get('started_at') else None,
+                    'completed_at': session['processing_info'].get('completed_at').isoformat() if session['processing_info'].get('completed_at') else None,
+                    'execution_time_seconds': session['processing_info'].get('execution_time_seconds')
+                }
+            
+            sessions.append(session_data)
+        
+        return sessions, len(sessions)
+    
+    def increment_download_count(self, session_id):
+        """Increment ZIP download count"""
+        self.sessions.update_one(
+            {'session_id': session_id},
+            {
+                '$inc': {'zip_download_count': 1},
+                '$set': {'updated_at': datetime.now()}
+            }
+        )

@@ -4,6 +4,13 @@ import sys
 import io
 import shutil
 from dotenv import load_dotenv
+import tempfile
+
+# Add project root to Python path
+project_root = os.path.join(os.path.dirname(__file__), '..', '..')
+sys.path.append(project_root)
+
+from src.utils.gcs_utils import get_gcs_handler
 
 load_dotenv()
 
@@ -12,13 +19,20 @@ if sys.platform == "win32":
 
 # NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
-# Use session directories from environment, fallback to original paths
-data_dir = os.getenv('SESSION_DATA_DIR', os.path.join(script_dir, '..', '..', 'data'))
-output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway_and_boq.xlsx'))
+session_id = os.getenv('SESSION_ID', 'default')
 template_file = os.path.join(script_dir, '..', '..', 'template', 'main_carriageway_and_boq.xlsx')
 
-input_file = os.path.join(data_dir, 'TCS Schedule.xlsx')
-output_dir = os.path.dirname(output_file)
+# Initialize GCS
+gcs = get_gcs_handler()
+temp_dir = tempfile.mkdtemp()
+
+# Download input from GCS
+input_gcs_path = gcs.get_gcs_path(session_id, 'TCS Schedule.xlsx', 'data')
+input_file = gcs.download_to_temp(input_gcs_path, suffix='.xlsx')
+
+# Temp output file
+output_file = os.path.join(temp_dir, f"{session_id}_main_carriageway_and_boq.xlsx")
+output_dir = temp_dir
 
 # Create output directory if it doesn't exist
 os.makedirs(output_dir, exist_ok=True)
@@ -67,3 +81,12 @@ print(f"\nSuccessfully wrote data to {output_file}")
 print(f"Sheet: Quantity")
 print(f"Starting from row: 7, column: A")
 print(f"Total data rows written: {len(df_output)}")
+
+# Upload to GCS
+output_gcs_path = gcs.get_gcs_path(session_id, f"{session_id}_main_carriageway_and_boq.xlsx", 'output')
+gcs.upload_file(output_file, output_gcs_path)
+print(f"[GCS] Uploaded to: gs://{gcs.bucket.name}/{output_gcs_path}")
+
+# Cleanup temp files
+os.remove(input_file)
+shutil.rmtree(temp_dir)

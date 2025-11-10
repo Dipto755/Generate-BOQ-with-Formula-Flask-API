@@ -6,6 +6,12 @@ import io
 import os
 from dotenv import load_dotenv
 
+# Add project root to Python path
+project_root = os.path.join(os.path.dirname(__file__), '..', '..')
+sys.path.append(project_root)
+
+from src.utils.gcs_utils import get_gcs_handler
+
 load_dotenv()
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -22,25 +28,25 @@ class FormulaApplier:
         self.template_path = Path(template_path)
         self.template = self._load_template()
         
-        # NEW CODE:
-        # Use session directories from environment, fallback to original paths
+        # Initialize session and GCS
+        self.session_id = os.getenv('SESSION_ID', 'default')
+        self.gcs = get_gcs_handler()
+        
+        # Handle input/output paths with GCS
         if input_excel_path is None:
-            session_output_file = os.getenv('SESSION_OUTPUT_FILE')
-            if session_output_file:
-                self.input_excel_path = Path(session_output_file)
-            else:
-                current_dir = Path(__file__).parent
-                self.input_excel_path = current_dir.parent.parent / "output" / "main_carriageway_and_boq.xlsx"
+            # Download from GCS to temp location
+            self.output_gcs_path = self.gcs.get_gcs_path(
+                self.session_id, 
+                f"{self.session_id}_main_carriageway_and_boq.xlsx", 
+                'output'
+            )
+            self.input_excel_path = Path(self.gcs.download_to_temp(self.output_gcs_path, suffix='.xlsx'))
         else:
             self.input_excel_path = Path(input_excel_path)
 
         if output_excel_path is None:
-            session_output_file = os.getenv('SESSION_OUTPUT_FILE')
-            if session_output_file:
-                self.output_excel_path = Path(session_output_file)
-            else:
-                current_dir = Path(__file__).parent
-                self.output_excel_path = current_dir.parent.parent / "output" / "main_carriageway_and_boq.xlsx"
+            # Use same file as input (work on the temp file)
+            self.output_excel_path = self.input_excel_path
         else:
             self.output_excel_path = Path(output_excel_path)
         
@@ -139,6 +145,10 @@ class FormulaApplier:
         input_wb.close()
         output_wb.close()
         
+        # Upload to GCS
+        self.gcs.upload_file(str(self.output_excel_path), self.output_gcs_path)
+        print(f"[GCS] Uploaded to: gs://{self.gcs.bucket.name}/{self.output_gcs_path}")
+        
         return {
             "input_first_row": min(data_rows),
             "input_last_row": max(data_rows),
@@ -204,6 +214,10 @@ class FormulaApplier:
         output_wb.save(self.output_excel_path)
         input_wb.close()
         output_wb.close()
+        
+        # Upload to GCS
+        self.gcs.upload_file(str(self.output_excel_path), self.output_gcs_path)
+        print(f"[GCS] Uploaded to: gs://{self.gcs.bucket.name}/{self.output_gcs_path}")
         
         return {
             "total_mappings": len(row_mapping),

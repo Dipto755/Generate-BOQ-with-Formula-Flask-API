@@ -1,7 +1,15 @@
 import json
 import os
+import sys
 from pathlib import Path
 from openpyxl import load_workbook
+import shutil
+
+# Add project root to Python path
+project_root = os.path.join(os.path.dirname(__file__), '..', '..')
+sys.path.append(project_root)
+
+from src.utils.gcs_utils import get_gcs_handler
 
 def log_debug(message):
     debug_file = Path(__file__).parent / 'boq_debug.log'
@@ -10,16 +18,19 @@ def log_debug(message):
     print(message)
 
 # Use session directories from environment
-output_file = os.getenv('SESSION_OUTPUT_FILE', '')
-session_id = os.getenv('SESSION_ID', '')
+session_id = os.getenv('SESSION_ID', 'default')
 
 log_debug(f"=== BOQ POPULATOR - FORMULA WRITING TO MERGED TEMPLATE ===")
 
-# File paths
+# Initialize GCS
+gcs = get_gcs_handler()
+
 project_root = Path(__file__).parent.parent.parent
 boq_formula_json_path = project_root / 'boq_formula_mapping.json'
-session_output_dir = Path(output_file).parent
-boq_output_path = session_output_dir / f"{session_id}_main_carriageway_and_boq.xlsx"
+
+# Download file from GCS
+output_gcs_path = gcs.get_gcs_path(session_id, f"{session_id}_main_carriageway_and_boq.xlsx", 'output')
+boq_output_path = Path(gcs.download_to_temp(output_gcs_path, suffix='.xlsx'))
 
 try:
     # Load formula mapping from JSON
@@ -64,6 +75,13 @@ try:
     wb.close()
     
     log_debug(f"Written {populated_count} formulas to merged template")
+    
+    # Upload back to GCS
+    gcs.upload_file(str(boq_output_path), output_gcs_path)
+    log_debug(f"[GCS] Uploaded to: gs://{gcs.bucket.name}/{output_gcs_path}")
+    
+    # Cleanup
+    os.remove(boq_output_path)
 
 except Exception as e:
     log_debug(f"ERROR: {str(e)}")

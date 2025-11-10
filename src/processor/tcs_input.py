@@ -15,6 +15,12 @@ import sys
 import io
 from dotenv import load_dotenv
 
+# Add project root to Python path
+project_root = os.path.join(os.path.dirname(__file__), '..', '..')
+sys.path.append(project_root)
+
+from src.utils.gcs_utils import get_gcs_handler
+
 load_dotenv()
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -25,13 +31,20 @@ if sys.platform == "win32":
 
 # NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
-# Use session directories from environment, fallback to original paths
-data_dir = os.getenv('SESSION_DATA_DIR', os.path.join(script_dir, '..', '..', 'data'))
-output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway_and_boq.xlsx'))
+session_id = os.getenv('SESSION_ID', 'default')
 
-TCS_INPUT_FILE = os.path.join(data_dir, 'TCS Input.xlsx')
-MAIN_CARRIAGEWAY_FILE = output_file
-OUTPUT_EXCEL = output_file
+# Initialize GCS
+gcs = get_gcs_handler()
+
+# Download files from GCS
+input_gcs_path = gcs.get_gcs_path(session_id, 'TCS Input.xlsx', 'data')
+output_gcs_path = gcs.get_gcs_path(session_id, f"{session_id}_main_carriageway_and_boq.xlsx", 'output')
+
+TCS_INPUT_FILE = gcs.download_to_temp(input_gcs_path, suffix='.xlsx')
+temp_main_file = gcs.download_to_temp(output_gcs_path, suffix='.xlsx')
+
+MAIN_CARRIAGEWAY_FILE = temp_main_file
+OUTPUT_EXCEL = temp_main_file
 
 
 
@@ -339,6 +352,14 @@ def main():
         print(f"\nColumn layout:")
         print(f"  A-D: Core columns (from, to, length, type_of_cross_section)")
         print(f"  E onwards: Specification columns")
+        
+        # Upload to GCS
+        gcs.upload_file(OUTPUT_EXCEL, output_gcs_path)
+        print(f"\n[GCS] Uploaded to: gs://{gcs.bucket.name}/{output_gcs_path}")
+        
+        # Cleanup
+        os.remove(TCS_INPUT_FILE)
+        os.remove(OUTPUT_EXCEL)
         
     except FileNotFoundError as e:
         print(f"\n[ERROR] File not found - {e}")

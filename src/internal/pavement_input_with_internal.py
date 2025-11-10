@@ -10,6 +10,12 @@ import sys
 import io
 from dotenv import load_dotenv
 
+# Add project root to Python path
+project_root = os.path.join(os.path.dirname(__file__), '..', '..')
+sys.path.append(project_root)
+
+from src.utils.gcs_utils import get_gcs_handler
+
 load_dotenv()
 if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -21,13 +27,20 @@ if sys.platform == "win32":
 
 # NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
-# Use session directories from environment, fallback to original paths
-data_dir = os.getenv('SESSION_DATA_DIR', os.path.join(script_dir, '..', '..', 'data'))
-output_file = os.getenv('SESSION_OUTPUT_FILE', os.path.join(script_dir, '..', '..', 'output', 'main_carriageway_and_boq.xlsx'))
+session_id = os.getenv('SESSION_ID', 'default')
 
-PAVEMENT_INPUT_FILE = os.path.join(data_dir, 'Pavement Input.xlsx')
-MAIN_CARRIAGEWAY_FILE = output_file
-OUTPUT_EXCEL = output_file
+# Initialize GCS
+gcs = get_gcs_handler()
+
+# Download files from GCS
+pavement_gcs = gcs.get_gcs_path(session_id, 'Pavement Input.xlsx', 'data')
+output_gcs_path = gcs.get_gcs_path(session_id, f"{session_id}_main_carriageway_and_boq.xlsx", 'output')
+
+PAVEMENT_INPUT_FILE = gcs.download_to_temp(pavement_gcs, suffix='.xlsx')
+temp_main_file = gcs.download_to_temp(output_gcs_path, suffix='.xlsx')
+
+MAIN_CARRIAGEWAY_FILE = temp_main_file
+OUTPUT_EXCEL = temp_main_file
 
 
 # ============================================================================
@@ -265,6 +278,14 @@ def main():
         print("Output file:", OUTPUT_EXCEL)
         print("Total rows processed:", row_count)
         print("Columns updated: KY, KZ, LA, LB")
+        
+        # Upload to GCS
+        gcs.upload_file(OUTPUT_EXCEL, output_gcs_path)
+        print(f"\n[GCS] Uploaded to: gs://{gcs.bucket.name}/{output_gcs_path}")
+        
+        # Cleanup
+        os.remove(PAVEMENT_INPUT_FILE)
+        os.remove(OUTPUT_EXCEL)
         
     except FileNotFoundError as e:
         print("\n[ERROR] File not found")

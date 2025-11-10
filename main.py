@@ -13,8 +13,13 @@ import shutil
 from datetime import datetime
 import zipfile
 from dotenv import load_dotenv
+import tempfile
 # Import session manager
 from api.session_manager import SessionManager
+
+# Import GCS handler
+# sys.path.insert(0, str(Path(__file__).parent / 'src' / 'internal'))
+from src.utils.gcs_utils import get_gcs_handler
 
 load_dotenv()
 # Initialize Flask app
@@ -61,6 +66,103 @@ def validate_template():
     """Validate that template file exists"""
     if not TEMPLATE_FILE.exists():
         raise FileNotFoundError(f"Template file not found: {TEMPLATE_FILE}")
+
+def test_gcs_connection():
+    """
+    Test GCS connection and permissions
+    Returns: (success: bool, message: str)
+    """
+    try:
+        print("\n" + "="*80)
+        print("TESTING GCS CONNECTION")
+        print("="*80)
+        
+        # Get GCS configuration from environment
+        bucket_name = os.getenv('GCS_BUCKET_NAME')
+        project_id = os.getenv('GCS_PROJECT_ID')
+        credentials_path = os.getenv('GCS_CREDENTIALS_PATH')
+        
+        # Check if environment variables are set
+        if not bucket_name:
+            return False, "GCS_BUCKET_NAME not set in environment variables"
+        if not project_id:
+            return False, "GCS_PROJECT_ID not set in environment variables"
+        if not credentials_path:
+            return False, "GCS_CREDENTIALS_PATH not set in environment variables"
+        
+        print(f"✓ Bucket Name: {bucket_name}")
+        print(f"✓ Project ID: {project_id}")
+        print(f"✓ Credentials Path: {credentials_path}")
+        
+        # Check if credentials file exists
+        if not os.path.exists(credentials_path):
+            return False, f"Credentials file not found at: {credentials_path}"
+        print(f"✓ Credentials file exists")
+        
+        # Initialize GCS handler
+        print("\n[TEST 1] Initializing GCS client...")
+        gcs = get_gcs_handler()
+        print("✓ GCS client initialized successfully")
+        
+        # Test 2: Check if bucket exists and is accessible
+        print("\n[TEST 2] Checking bucket access...")
+        if gcs.bucket.exists():
+            print(f"✓ SUCCESS: Connected to bucket '{bucket_name}'")
+        else:
+            return False, f"Bucket '{bucket_name}' does not exist or is not accessible"
+        
+        # Test 3: Check read permissions
+        print("\n[TEST 3] Checking read permissions...")
+        try:
+            blobs = list(gcs.bucket.list_blobs(max_results=1))
+            print(f"✓ SUCCESS: Can read from bucket")
+        except Exception as e:
+            return False, f"Cannot read from bucket: {str(e)}"
+        
+        # Test 4: Check write permissions (create and delete a test file)
+        print("\n[TEST 4] Checking write permissions...")
+        try:
+            test_file_path = '_test_connection.txt'
+            test_blob = gcs.bucket.blob(test_file_path)
+            test_content = f'Connection test at {datetime.now()}'
+            test_blob.upload_from_string(test_content)
+            print(f"✓ SUCCESS: Can write to bucket")
+            
+            # Clean up test file
+            test_blob.delete()
+            print(f"✓ SUCCESS: Can delete from bucket")
+        except Exception as e:
+            return False, f"Cannot write/delete from bucket: {str(e)}"
+        
+        # Test 5: Check session directory structure
+        print("\n[TEST 5] Checking session directory structure...")
+        try:
+            test_session_id = '_test_session'
+            test_paths = [
+                f'sessions/{test_session_id}/data/test.txt',
+                f'sessions/{test_session_id}/output/test.txt'
+            ]
+            
+            for test_path in test_paths:
+                blob = gcs.bucket.blob(test_path)
+                blob.upload_from_string('test')
+                blob.delete()
+            
+            print(f"✓ SUCCESS: Can create/delete in session directories")
+        except Exception as e:
+            return False, f"Cannot manage session directories: {str(e)}"
+        
+        print("\n" + "="*80)
+        print("GCS CONNECTION TEST: ALL TESTS PASSED ✓")
+        print("="*80)
+        
+        return True, "GCS connection successful"
+        
+    except Exception as e:
+        error_msg = f"GCS connection test failed: {str(e)}"
+        print(f"\n✗ ERROR: {error_msg}")
+        print(traceback.format_exc())
+        return False, error_msg
 
 def run_session_processing(session_id, session_data_dir, session_output_file):
     """
@@ -233,166 +335,188 @@ def run_session_processing(session_id, session_data_dir, session_output_file):
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'message': 'BOQ Generation API is running',
-        'version': '1.0.0'
-    }), 200
+    try:
+        # Check if template file exists
+        template_exists = TEMPLATE_FILE.exists()
+        
+        # Check MongoDB connection
+        mongodb_healthy = False
+        mongodb_message = ""
+        try:
+            session_manager = SessionManager()
+            session_manager.client.admin.command('ping')
+            mongodb_healthy = True
+            mongodb_message = "Connected"
+        except Exception as e:
+            mongodb_message = str(e)
+        
+        # Check GCS connection
+        gcs_healthy = False
+        gcs_message = ""
+        try:
+            gcs_success, gcs_msg = test_gcs_connection()
+            gcs_healthy = gcs_success
+            gcs_message = gcs_msg
+        except Exception as e:
+            gcs_message = str(e)
+        
+        # Determine overall health
+        all_healthy = template_exists and mongodb_healthy and gcs_healthy
+        
+        return jsonify({
+            'status': 'healthy' if all_healthy else 'degraded',
+            'timestamp': datetime.now().isoformat(),
+            'checks': {
+                'template_file': {
+                    'status': 'ok' if template_exists else 'error',
+                    'path': str(TEMPLATE_FILE),
+                    'exists': template_exists
+                },
+                'mongodb': {
+                    'status': 'ok' if mongodb_healthy else 'error',
+                    'message': mongodb_message
+                },
+                'gcs': {
+                    'status': 'ok' if gcs_healthy else 'error',
+                    'message': gcs_message,
+                    'bucket': os.getenv('GCS_BUCKET_NAME', 'not configured')
+                }
+            }
+        }), 200
+    
+    except Exception as e:
+        # Catch any unexpected errors during health check
+        return jsonify({
+            'status': 'error',
+            'timestamp': datetime.now().isoformat(),
+            'error': 'Health check failed',
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 @app.route('/api/upload-files', methods=['POST'])
 def upload_files():
-    """Upload 4 Excel files and create session"""
+    """
+    Upload 4 required Excel files to GCS and create a new session
+    Files are stored in GCS session-specific directories
+    """
     try:
-        session_manager = SessionManager()
+        # Validate all required files are present
+        missing_files = []
+        for key, filename in REQUIRED_FILES.items():
+            if key not in request.files:
+                missing_files.append(f"{key} ({filename})")
         
-        # Generate unique session ID
-        session_id = session_manager.generate_session_id()
-        
-        # Create session directories
-        session_data_dir = DATA_DIR / 'sessions' / session_id
-        session_output_dir = OUTPUT_DIR / 'sessions' / session_id
-        session_data_dir.mkdir(parents=True, exist_ok=True)
-        session_output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create session in MongoDB
-        session_manager.create_session(session_id)
-        
-        # Debug: Check what files we received
-        print(f"DEBUG: Request files: {list(request.files.keys())}")
-        
-        # File validation
-        if not request.files:
-            return jsonify({'error': 'No files provided'}), 400
-        
-        # Try to get files by specific field names first
-        file_map = {}
-        file_debug_info = {}
-        
-        for key in REQUIRED_FILES.keys():
-            if key in request.files:
-                file = request.files[key]
-                file_debug_info[key] = {
-                    'file_object': str(type(file)),
-                    'has_filename': hasattr(file, 'filename'),
-                    'filename': file.filename if hasattr(file, 'filename') else 'NO_FILENAME',
-                    'filename_type': str(type(file.filename)) if hasattr(file, 'filename') else 'NO_FILENAME_ATTR'
-                }
-                
-                # More robust check for valid file object with filename
-                if (file and 
-                    hasattr(file, 'filename') and 
-                    file.filename is not None and 
-                    str(file.filename).strip() != ''):
-                    file_map[key] = file
-                    print(f"DEBUG: Added file for {key}: {file.filename}")
-                else:
-                    print(f"DEBUG: Skipped file for {key}: {file_debug_info[key]}")
-        
-        print(f"DEBUG: Files mapped: {list(file_map.keys())}")
-        
-        # If not all files found, try 'files' field
-        if len(file_map) < 4 and 'files' in request.files:
-            files = request.files.getlist('files')
-            print(f"DEBUG: Found {len(files)} files in 'files' field")
-            
-            if len(files) != 4:
-                return jsonify({
-                    'error': 'Incorrect number of files',
-                    'message': f'Expected 4 files, received {len(files)}',
-                    'debug_info': file_debug_info
-                }), 400
-            
-            # Simple filename matching
-            for file in files:
-                if file and hasattr(file, 'filename') and file.filename:
-                    filename_lower = file.filename.lower()
-                    for key, expected_name in REQUIRED_FILES.items():
-                        if key not in file_map:
-                            expected_lower = expected_name.lower()
-                            if expected_lower in filename_lower or filename_lower in expected_lower:
-                                file_map[key] = file
-                                print(f"DEBUG: Matched {file.filename} to {key}")
-                                break
-        
-        # Verify we have all required files
-        missing_files = [k for k in REQUIRED_FILES.keys() if k not in file_map]
         if missing_files:
             return jsonify({
                 'error': 'Missing required files',
                 'missing_files': missing_files,
-                'required_files': list(REQUIRED_FILES.keys()),
-                'debug_info': file_debug_info,
-                'files_received': list(request.files.keys())
+                'required_files': REQUIRED_FILES
             }), 400
         
-        # Save uploaded files to session directory
-        saved_files = {}
-        for key, file in file_map.items():
-            target_name = REQUIRED_FILES[key]
-            target_path = session_data_dir / target_name
-            
-            # Additional validation for file object
-            if not file or not hasattr(file, 'filename') or not file.filename:
-                return jsonify({
-                    'error': f'Invalid file for: {key}',
-                    'message': 'File object is invalid or has no filename',
-                    'debug_info': file_debug_info.get(key, 'NO_DEBUG_INFO')
-                }), 400
-            
-            try:
-                # Check file size and type
-                file.seek(0, os.SEEK_END)
-                file_size = file.tell()
-                file.seek(0)
+        # Validate file extensions
+        invalid_files = []
+        for key, expected_filename in REQUIRED_FILES.items():
+            file = request.files[key]
+            if file.filename == '':
+                invalid_files.append(f"{key}: No file selected")
+            elif not allowed_file(file.filename):
+                invalid_files.append(f"{key}: Invalid file type (must be .xlsx or .xls)")
+        
+        if invalid_files:
+            return jsonify({
+                'error': 'Invalid files',
+                'details': invalid_files
+            }), 400
+        
+        # Create new session
+        session_manager = SessionManager()
+        session_data = session_manager.create_session()
+        session_id = session_data['session_id']
+        
+        print(f"\n{'='*80}")
+        print(f"NEW SESSION CREATED: {session_id}")
+        print(f"{'='*80}\n")
+        
+        # Initialize GCS handler
+        gcs = get_gcs_handler()
+        
+        # Upload files to GCS
+        uploaded_files = {}
+        upload_errors = []
+        
+        try:
+            for key, expected_filename in REQUIRED_FILES.items():
+                file = request.files[key]
                 
-                if file_size > MAX_FILE_SIZE:
-                    return jsonify({
-                        'error': f'File too large: {target_name}',
-                        'message': f'Maximum size: {MAX_FILE_SIZE / (1024*1024):.1f} MB'
-                    }), 400
+                print(f"Uploading {expected_filename}...")
                 
-                if not allowed_file(file.filename):
-                    return jsonify({
-                        'error': f'Invalid file type: {target_name}',
-                        'message': 'Only .xlsx and .xls files are allowed'
-                    }), 400
+                # Create temp file
+                temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+                temp_path = temp_file.name
+                file.save(temp_path)
+                temp_file.close()
                 
-                # Save file
-                file.save(str(target_path))
-                print(f"DEBUG: Saved file for {key} to {target_path}")
+                # Upload to GCS
+                gcs_path = gcs.get_gcs_path(session_id, expected_filename, 'data')
+                gcs.upload_file(temp_path, gcs_path)
                 
-                # Add to session in MongoDB
-                file_info = {
-                    'field_name': key,
-                    'original_filename': file.filename,
-                    'saved_filename': target_name,
-                    'file_path': str(target_path),
-                    'uploaded_at': datetime.now(),
-                    'file_size_bytes': file_size
+                # Clean up temp file
+                os.remove(temp_path)
+                
+                uploaded_files[key] = {
+                    'filename': expected_filename,
+                    'gcs_path': gcs_path,
+                    'uploaded_at': datetime.now().isoformat()
                 }
-                session_manager.add_input_file(session_id, file_info)
-                saved_files[key] = str(target_path)
                 
-            except Exception as file_error:
-                return jsonify({
-                    'error': f'Error processing file: {key}',
-                    'message': str(file_error),
-                    'file_info': {
-                        'filename': file.filename,
-                        'content_type': file.content_type if hasattr(file, 'content_type') else 'NO_CONTENT_TYPE'
-                    }
-                }), 400
+                print(f"✓ Uploaded: {expected_filename} → gs://{gcs.bucket.name}/{gcs_path}")
+        
+        except Exception as upload_error:
+            # If upload fails, clean up session and uploaded files
+            upload_errors.append(str(upload_error))
+            
+            # Try to delete partially uploaded files
+            for key, file_info in uploaded_files.items():
+                try:
+                    gcs.delete_file(file_info['gcs_path'])
+                except:
+                    pass
+            
+            # Delete session
+            session_manager.delete_session(session_id)
+            
+            return jsonify({
+                'error': 'File upload to GCS failed',
+                'details': upload_errors,
+                'session_id': session_id,
+                'message': 'Session and files have been cleaned up'
+            }), 500
+        
+        # Update session with GCS file information
+        session_manager.update_session_data(session_id, {
+            'uploaded_files': uploaded_files,
+            'gcs_bucket': os.getenv('GCS_BUCKET_NAME'),
+            'storage_type': 'gcs'
+        })
+        
+        print(f"\n{'='*80}")
+        print(f"ALL FILES UPLOADED TO GCS SUCCESSFULLY")
+        print(f"Session ID: {session_id}")
+        print(f"Bucket: {os.getenv('GCS_BUCKET_NAME')}")
+        print(f"{'='*80}\n")
         
         return jsonify({
-            'status': 'success',
+            'message': 'Files uploaded successfully to GCS',
             'session_id': session_id,
-            'message': 'Files uploaded successfully',
-            'uploaded_files': list(saved_files.keys())
-        }), 200
-        
+            'uploaded_files': uploaded_files,
+            'gcs_bucket': os.getenv('GCS_BUCKET_NAME'),
+            'next_step': 'Call /api/execute-calculation with this session_id to start processing'
+        }), 201
+    
     except Exception as e:
-        print(f"DEBUG: Upload failed with error: {str(e)}")
-        print(f"DEBUG: Traceback: {traceback.format_exc()}")
+        print(f"Error in upload_files: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({
             'error': 'Upload failed',
             'message': str(e),
@@ -404,16 +528,25 @@ def execute_calculation():
     """Execute calculations for a session (starts background thread)"""
     try:
         data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+            
         session_id = data.get('session_id')
         
         if not session_id:
             return jsonify({'error': 'session_id is required'}), 400
         
+        print(f"Looking for session: {session_id}")
+        
         session_manager = SessionManager()
         session = session_manager.get_session(session_id)
         
         if not session:
+            print(f"Session not found in database: {session_id}")
             return jsonify({'error': 'Session not found'}), 404
+        
+        print(f"Found session: {session_id}, status: {session.get('status')}")
         
         if session['status'] != 'uploaded':
             return jsonify({
@@ -421,17 +554,24 @@ def execute_calculation():
                 'message': f"Session status is '{session['status']}', must be 'uploaded'"
             }), 400
         
-        # Create session output file
+        # Create session output directory
         session_output_dir = OUTPUT_DIR / 'sessions' / session_id
         session_output_dir.mkdir(parents=True, exist_ok=True)
         output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
         session_output_file = session_output_dir / output_filename
         
+        print(f"Creating output file: {session_output_file}")
+        
         # Copy template to session output directory
+        if not TEMPLATE_FILE.exists():
+            return jsonify({'error': f'Template file not found: {TEMPLATE_FILE}'}), 500
+            
         shutil.copy2(TEMPLATE_FILE, session_output_file)
+        print(f"Template copied to session output directory")
         
         # Update status to processing immediately
         session_manager.update_session_status(session_id, 'processing')
+        print(f"Session status updated to 'processing'")
         
         # Start processing in background thread
         thread = threading.Thread(
@@ -441,6 +581,8 @@ def execute_calculation():
         thread.daemon = True
         thread.start()
         
+        print(f"Background processing started for session: {session_id}")
+        
         return jsonify({
             'status': 'success',
             'session_id': session_id,
@@ -449,9 +591,12 @@ def execute_calculation():
         }), 200
         
     except Exception as e:
+        print(f"Error in execute_calculation: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({
             'error': 'Execution failed',
-            'message': str(e)
+            'message': str(e),
+            'traceback': traceback.format_exc()
         }), 500
 
 @app.route('/api/execute-calculation-sync', methods=['POST'])
@@ -559,7 +704,9 @@ def get_session_status(session_id):
 
 @app.route('/api/download-file/<session_id>', methods=['GET'])
 def download_file(session_id):
-    """Download output file for session"""
+    """
+    Download the generated main carriageway file from GCS
+    """
     try:
         session_manager = SessionManager()
         session = session_manager.get_session(session_id)
@@ -567,32 +714,45 @@ def download_file(session_id):
         if not session:
             return jsonify({'error': 'Session not found'}), 404
         
-        if session['status'] != 'completed':
+        if session.get('status') != 'completed':
             return jsonify({
-                'error': f"Calculation not completed", 
-                'message': f"Current status: {session['status']}"
+                'error': 'File not ready',
+                'message': 'Processing not completed yet',
+                'current_status': session.get('status')
             }), 400
         
-        output_file_path = session['output_file']['file_path']
+        # Initialize GCS
+        gcs = get_gcs_handler()
         
-        if not os.path.exists(output_file_path):
-            return jsonify({'error': 'Output file not found'}), 404
+        # Download from GCS to temp location
+        output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+        gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
         
-        # Increment download count
-        session_manager.sessions.update_one(
-            {'session_id': session_id},
-            {'$inc': {'output_file.download_count': 1}}
-        )
+        # Check if file exists in GCS
+        if not gcs.file_exists(gcs_path):
+            return jsonify({
+                'error': 'File not found in GCS',
+                'gcs_path': gcs_path
+            }), 404
         
+        # Download to temp location
+        temp_file = gcs.download_to_temp(gcs_path, suffix='.xlsx')
+        
+        # Send file to user
         return send_file(
-            output_file_path,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            temp_file,
             as_attachment=True,
-            download_name=session['output_file']['filename']
+            download_name=output_filename,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         )
-        
+    
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error downloading file: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            'error': 'Download failed',
+            'message': str(e)
+        }), 500
     
 @app.route('/api/download-boq/<session_id>', methods=['GET'])
 def download_boq(session_id):
@@ -633,7 +793,7 @@ def download_boq(session_id):
     
 @app.route('/api/download-session/<session_id>', methods=['GET'])
 def download_session_zip(session_id):
-    """Download both files as ZIP"""
+    """Download main carriageway file as ZIP from GCS"""
     try:
         session_manager = SessionManager()
         session = session_manager.get_session(session_id)
@@ -641,47 +801,167 @@ def download_session_zip(session_id):
         if not session:
             return jsonify({'error': 'Session not found'}), 404
         
-        if session['status'] != 'completed':
+        if session.get('status') != 'completed':
             return jsonify({
-                'error': 'Calculation not completed', 
-                'message': f"Current status: {session['status']}"
+                'error': 'Files not ready',
+                'message': 'Processing not completed yet',
+                'current_status': session.get('status')
             }), 400
         
-        session_output_dir = OUTPUT_DIR / 'sessions' / session_id
+        # Initialize GCS
+        gcs = get_gcs_handler()
         
-        # Check if both files exist
-        main_file = session_output_dir / f"{session_id}_main_carriageway.xlsx"
-        boq_file = session_output_dir / f"{session_id}_BOQ.xlsx"
+        # Create temporary directory
+        temp_dir = tempfile.mkdtemp()
+        zip_path = os.path.join(temp_dir, f'{session_id}_files.zip')
         
-        if not main_file.exists() or not boq_file.exists():
-            return jsonify({'error': 'Required files not found'}), 404
+        try:
+            # Download file from GCS
+            main_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+            main_gcs_path = gcs.get_gcs_path(session_id, main_filename, 'output')
+            
+            if not gcs.file_exists(main_gcs_path):
+                return jsonify({
+                    'error': 'File not found in GCS',
+                    'gcs_path': main_gcs_path
+                }), 404
+            
+            temp_main_file = gcs.download_to_temp(main_gcs_path, suffix='.xlsx')
+            
+            # Create ZIP with just the Excel file
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.write(temp_main_file, main_filename)
+            
+            # Clean up
+            os.remove(temp_main_file)
+            
+            # Track download
+            session_manager.increment_download_count(session_id)
+            
+            # Send ZIP
+            response = send_file(
+                zip_path,
+                as_attachment=True,
+                download_name=f'{session_id}_BOQ_files.zip',
+                mimetype='application/zip'
+            )
+            
+            # Cleanup after sending
+            @response.call_on_close
+            def cleanup():
+                try:
+                    if os.path.exists(zip_path):
+                        os.remove(zip_path)
+                    if os.path.exists(temp_dir):
+                        os.rmdir(temp_dir)
+                except:
+                    pass
+            
+            return response
         
-        # Create ZIP file
-        zip_path = session_output_dir / f"{session_id}_files.zip"
+        except Exception as inner_error:
+            try:
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+            except:
+                pass
+            raise inner_error
+    
+    except Exception as e:
+        print(f"Error creating ZIP: {str(e)}")
+        return jsonify({
+            'error': 'ZIP creation failed',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/output-file-paths/<session_id>', methods=['GET'])
+def get_output_file_paths(session_id):
+    """Get output file paths for a session"""
+    try:
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
         
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            zipf.write(main_file, main_file.name)
-            zipf.write(boq_file, boq_file.name)
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
         
-        # Update download counts
-        session_manager.sessions.update_one(
-            {'session_id': session_id},
-            {'$inc': {
-                'output_file.download_count': 1,
-                'boq_file.download_count': 1,
-                'zip_download_count': 1
-            }}
-        )
+        if session.get('status') != 'completed':
+            return jsonify({
+                'error': 'Files not ready',
+                'message': 'Processing not completed yet',
+                'current_status': session.get('status')
+            }), 400
         
-        return send_file(
-            zip_path,
-            mimetype='application/zip',
-            as_attachment=True,
-            download_name=f"{session_id}_BOQ_Files.zip"
-        )
+        # Initialize GCS
+        gcs = get_gcs_handler()
+        
+        # Get file paths
+        file_paths = {}
+        
+        # Main output file (main_carriageway_and_boq)
+        main_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+        main_gcs_path = gcs.get_gcs_path(session_id, main_filename, 'output')
+        
+        if gcs.file_exists(main_gcs_path):
+            file_paths['main_carriageway_and_boq'] = {
+                'filename': main_filename,
+                'gcs_path': main_gcs_path,
+                'gcs_uri': f"gs://{gcs.bucket.name}/{main_gcs_path}",
+                'download_url': f"/api/download-file/{session_id}",
+                'file_type': 'main_output'
+            }
+        
+        # BOQ file (if exists)
+        boq_filename = f"{session_id}_BOQ.xlsx"
+        boq_gcs_path = gcs.get_gcs_path(session_id, boq_filename, 'output')
+        
+        if gcs.file_exists(boq_gcs_path):
+            file_paths['boq'] = {
+                'filename': boq_filename,
+                'gcs_path': boq_gcs_path,
+                'gcs_uri': f"gs://{gcs.bucket.name}/{boq_gcs_path}",
+                'download_url': f"/api/download-boq/{session_id}",
+                'file_type': 'boq'
+            }
+        
+        # Session ZIP file
+        file_paths['session_zip'] = {
+            'filename': f"{session_id}_BOQ_files.zip",
+            'download_url': f"/api/download-session/{session_id}",
+            'file_type': 'zip_archive',
+            'description': 'Contains all generated files for the session'
+        }
+        
+        # Add session metadata
+        response_data = {
+            'session_id': session_id,
+            'status': session.get('status'),
+            'created_at': session.get('created_at').isoformat() if session.get('created_at') else None,
+            'completed_at': session.get('processing_info', {}).get('completed_at').isoformat() if session.get('processing_info', {}).get('completed_at') else None,
+            'execution_time_seconds': session.get('processing_info', {}).get('execution_time_seconds'),
+            'gcs_bucket': gcs.bucket.name,
+            'files': file_paths,
+            'available_downloads': len([f for f in file_paths.values() if f.get('download_url')]),
+            'file_count': len([f for f in file_paths.values() if f.get('gcs_path')])  # Only count actual files in GCS
+        }
+        
+        # Add output file info from session if available
+        if session.get('output_file'):
+            response_data['output_file_info'] = session['output_file']
+        
+        # Add BOQ file info from session if available
+        if session.get('boq_file'):
+            response_data['boq_file_info'] = session['boq_file']
+        
+        return jsonify(response_data), 200
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        print(f"Error getting output file paths: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            'error': 'Failed to get output file paths',
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
 
 @app.route('/api/sessions', methods=['GET'])
 def get_all_sessions():
@@ -702,27 +982,9 @@ def get_all_sessions():
         # Calculate skip for pagination
         skip = (page - 1) * limit
         
-        # Get sessions with pagination (newest first)
-        sessions_cursor = session_manager.sessions.find().sort('created_at', -1).skip(skip).limit(limit)
-        
-        sessions = []
-        for session in sessions_cursor:
-            session_data = {
-                'session_id': session['session_id'],
-                'status': session['status'],
-                'created_at': session['created_at'].isoformat(),
-                'updated_at': session['updated_at'].isoformat(),
-                'input_files_count': len(session['input_files']),
-                'has_error': session['error_info']['has_error']
-            }
-            
-            # Add output file info if exists
-            if session.get('output_file'):
-                session_data['output_file'] = session['output_file']
-            
-            sessions.append(session_data)
-        
-        total_sessions = session_manager.sessions.count_documents({})
+        # Get sessions using SessionManager
+        sessions, total_sessions = session_manager.get_all_sessions(limit=limit, skip=skip)
+        total_pages = (total_sessions + limit - 1) // limit  # Ceiling division
 
         return jsonify({
             'sessions': sessions,
@@ -730,9 +992,12 @@ def get_all_sessions():
         }), 200
         
     except Exception as e:
+        print(f"Error in get_all_sessions: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({
             'error': 'Failed to fetch sessions',
-            'message': str(e)
+            'message': str(e),
+            'traceback': traceback.format_exc()
         }), 500
 
 @app.route('/', methods=['GET'])
@@ -813,6 +1078,12 @@ def root():
                 'path': '/api/download-session/<session_id>',
                 'description': 'Download both main carriageway and BOQ files as ZIP',
                 'usage': 'curl -X GET -O http://localhost:5000/api/download-session/your_session_id'
+            },
+            'output_file_paths': {
+                'method': 'GET',
+                'path': '/api/output-file-paths/<session_id>',
+                'description': 'Get output file paths and download URLs for a session',
+                'usage': 'curl -X GET http://localhost:5000/api/output-file-paths/your_session_id'
             }
         },
         'workflow': {
@@ -863,6 +1134,16 @@ if __name__ == '__main__':
     except Exception as e:
         print(f"⚠ MongoDB connection test: FAILED - {str(e)}")
     
+    # Test GCS connection
+    print("\n" + "-"*80)
+    gcs_success, gcs_message = test_gcs_connection()
+    if gcs_success:
+        print(f"✓ GCS connection test: SUCCESS")
+    else:
+        print(f"⚠ GCS connection test: FAILED - {gcs_message}")
+        print("WARNING: File operations will fail without GCS access!")
+    print("-"*80 + "\n")
+    
     # Ensure directories exist on startup
     ensure_directories()
     
@@ -893,6 +1174,7 @@ if __name__ == '__main__':
     print("  GET  /api/download-file/<id>              - Download result")
     print("  GET  /api/download-boq/<id>               - Download BOQ file")
     print("  GET  /api/download-session/<id>           - Download session ZIP file")
+    print("  GET  /api/output-file-paths/<id>          - Get output file paths")
     print("="*80 + "\n")
     
     # Run Flask app

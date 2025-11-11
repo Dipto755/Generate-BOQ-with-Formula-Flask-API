@@ -29,21 +29,24 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 session_id = os.getenv('SESSION_ID', 'default')
 is_merged = os.getenv('IS_MERGED', 'True').lower() == 'true'
 
-# Determine output filename based on is_merged
-if is_merged:
-    output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+# Use SESSION_OUTPUT_FILE if available (local file), otherwise fallback to GCS
+output_file = os.getenv('SESSION_OUTPUT_FILE', '')
+if output_file and os.path.exists(output_file):
+    MAIN_CARRIAGEWAY_FILE = output_file
+    OUTPUT_EXCEL = output_file
+    print(f"Using local output file: {output_file}")
 else:
-    output_filename = f"{session_id}_main_carriageway.xlsx"
-
-# Initialize GCS
-gcs = get_gcs_handler()
-
-# Download from GCS
-output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
-temp_file = gcs.download_to_temp(output_gcs_path, suffix='.xlsx')
-
-MAIN_CARRIAGEWAY_FILE = temp_file
-OUTPUT_EXCEL = temp_file
+    # Fallback: download from GCS (for backward compatibility)
+    gcs = get_gcs_handler()
+    if is_merged:
+        output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+    else:
+        output_filename = f"{session_id}_main_carriageway.xlsx"
+    output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
+    temp_file = gcs.download_to_temp(output_gcs_path, suffix='.xlsx')
+    MAIN_CARRIAGEWAY_FILE = temp_file
+    OUTPUT_EXCEL = temp_file
+    print(f"[GCS] Downloaded output file from GCS: {temp_file}")
 
 
 # ============================================================================
@@ -160,12 +163,16 @@ def main():
                 for i, val in enumerate(sample_vals):
                     print(f"  Row {i + 2}: {val}")
         
-        # Upload to GCS
-        gcs.upload_file(OUTPUT_EXCEL, output_gcs_path)
-        print(f"\n[GCS] Uploaded to: gs://{gcs.bucket.name}/{output_gcs_path}")
+        # Note: File will be uploaded to GCS at the end of all processing in main.py
+        # No need to upload here for efficiency
         
-        # Cleanup
-        os.remove(OUTPUT_EXCEL)
+        # Cleanup - only remove temp files, not the local output file
+        # Only remove OUTPUT_EXCEL if it's a temp file (not the local SESSION_OUTPUT_FILE)
+        if OUTPUT_EXCEL != os.getenv('SESSION_OUTPUT_FILE', ''):
+            try:
+                os.remove(OUTPUT_EXCEL)
+            except:
+                pass
         
     except FileNotFoundError as e:
         print("\n[ERROR] File not found")

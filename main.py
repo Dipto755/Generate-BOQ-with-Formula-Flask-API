@@ -309,6 +309,15 @@ def run_session_processing(session_id, session_data_dir, session_output_file, is
                 started_at = session['processing_info']['started_at']
                 execution_time = (datetime.now() - started_at).total_seconds()
                 
+                # Upload final file to GCS (single upload after all processing)
+                if session_output_file.exists():
+                    from src.utils.gcs_utils import get_gcs_handler
+                    gcs = get_gcs_handler()
+                    output_filename = session_output_file.name
+                    output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
+                    gcs.upload_file(str(session_output_file), output_gcs_path)
+                    print(f"[GCS] Final upload completed: gs://{gcs.bucket.name}/{output_gcs_path}")
+                
                 # Update session with output file info
                 output_info = {
                     'filename': session_output_file.name,

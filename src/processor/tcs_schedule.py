@@ -22,34 +22,27 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 session_id = os.getenv('SESSION_ID', 'default')
 is_merged = os.getenv('IS_MERGED', 'True').lower() == 'true'
 
-# Determine template and output filename based on is_merged
-if is_merged:
-    template_filename = 'main_carriageway_and_boq.xlsx'
-    output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+# Use SESSION_OUTPUT_FILE if available (local file), otherwise fallback to GCS
+output_file = os.getenv('SESSION_OUTPUT_FILE', '')
+if not output_file or not os.path.exists(output_file):
+    # Fallback: download from GCS (for backward compatibility)
+    gcs = get_gcs_handler()
+    if is_merged:
+        output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+    else:
+        output_filename = f"{session_id}_main_carriageway.xlsx"
+    output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
+    output_file = gcs.download_to_temp(output_gcs_path, suffix='.xlsx')
+    print(f"[GCS] Downloaded output file from GCS: {output_file}")
 else:
-    template_filename = 'main_carriageway.xlsx'
-    output_filename = f"{session_id}_main_carriageway.xlsx"
+    print(f"Using local output file: {output_file}")
 
-template_file = os.path.join(script_dir, '..', '..', 'template', template_filename)
-
-# Initialize GCS
+# Initialize GCS for input files only
 gcs = get_gcs_handler()
-temp_dir = tempfile.mkdtemp()
 
 # Download input from GCS
 input_gcs_path = gcs.get_gcs_path(session_id, 'TCS Schedule.xlsx', 'data')
 input_file = gcs.download_to_temp(input_gcs_path, suffix='.xlsx')
-
-# Temp output file
-output_file = os.path.join(temp_dir, output_filename)
-output_dir = temp_dir
-
-# Create output directory if it doesn't exist
-os.makedirs(output_dir, exist_ok=True)
-
-# Copy template file to output directory
-shutil.copy2(template_file, output_file)
-print(f"Template copied to: {output_file}")
 
 # Read columns B to E from the Excel file starting from 3rd row (row index 2)
 # header=None means don't treat any row as header, just read raw data
@@ -92,11 +85,8 @@ print(f"Sheet: Quantity")
 print(f"Starting from row: 7, column: A")
 print(f"Total data rows written: {len(df_output)}")
 
-# Upload to GCS
-output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
-gcs.upload_file(output_file, output_gcs_path)
-print(f"[GCS] Uploaded to: gs://{gcs.bucket.name}/{output_gcs_path}")
+# Note: File will be uploaded to GCS at the end of all processing in main.py
+# No need to upload here for efficiency
 
-# Cleanup temp files
+# Cleanup temp input file only
 os.remove(input_file)
-shutil.rmtree(temp_dir)

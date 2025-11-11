@@ -39,15 +39,22 @@ class FormulaApplier:
         else:
             self.output_filename = f"{self.session_id}_main_carriageway.xlsx"
         
-        # Handle input/output paths with GCS
+        # Handle input/output paths - prefer SESSION_OUTPUT_FILE if available
         if input_excel_path is None:
-            # Download from GCS to temp location
-            self.output_gcs_path = self.gcs.get_gcs_path(
-                self.session_id, 
-                self.output_filename, 
-                'output'
-            )
-            self.input_excel_path = Path(self.gcs.download_to_temp(self.output_gcs_path, suffix='.xlsx'))
+            # Check for SESSION_OUTPUT_FILE first (local file)
+            session_output_file = os.getenv('SESSION_OUTPUT_FILE', '')
+            if session_output_file and os.path.exists(session_output_file):
+                self.input_excel_path = Path(session_output_file)
+                print(f"Using local output file: {session_output_file}")
+            else:
+                # Fallback: download from GCS (for backward compatibility)
+                self.output_gcs_path = self.gcs.get_gcs_path(
+                    self.session_id, 
+                    self.output_filename, 
+                    'output'
+                )
+                self.input_excel_path = Path(self.gcs.download_to_temp(self.output_gcs_path, suffix='.xlsx'))
+                print(f"[GCS] Downloaded output file from GCS: {self.input_excel_path}")
         else:
             self.input_excel_path = Path(input_excel_path)
 
@@ -152,9 +159,8 @@ class FormulaApplier:
         input_wb.close()
         output_wb.close()
         
-        # Upload to GCS
-        self.gcs.upload_file(str(self.output_excel_path), self.output_gcs_path)
-        print(f"[GCS] Uploaded to: gs://{self.gcs.bucket.name}/{self.output_gcs_path}")
+        # Note: File will be uploaded to GCS at the end of all processing in main.py
+        # No need to upload here for efficiency
         
         return {
             "input_first_row": min(data_rows),
@@ -222,9 +228,8 @@ class FormulaApplier:
         input_wb.close()
         output_wb.close()
         
-        # Upload to GCS
-        self.gcs.upload_file(str(self.output_excel_path), self.output_gcs_path)
-        print(f"[GCS] Uploaded to: gs://{self.gcs.bucket.name}/{self.output_gcs_path}")
+        # Note: File will be uploaded to GCS at the end of all processing in main.py
+        # No need to upload here for efficiency
         
         return {
             "total_mappings": len(row_mapping),

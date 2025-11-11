@@ -39,15 +39,22 @@ class FinalSumApplier:
         else:
             self.output_filename = f"{self.session_id}_main_carriageway.xlsx"
         
-        # Handle output path with GCS
+        # Handle output path - prefer SESSION_OUTPUT_FILE if available
         if output_excel_path is None:
-            # Download from GCS to temp location
-            self.output_gcs_path = self.gcs.get_gcs_path(
-                self.session_id, 
-                self.output_filename, 
-                'output'
-            )
-            self.output_excel_path = Path(self.gcs.download_to_temp(self.output_gcs_path, suffix='.xlsx'))
+            # Check for SESSION_OUTPUT_FILE first (local file)
+            session_output_file = os.getenv('SESSION_OUTPUT_FILE', '')
+            if session_output_file and os.path.exists(session_output_file):
+                self.output_excel_path = Path(session_output_file)
+                print(f"Using local output file: {session_output_file}")
+            else:
+                # Fallback: download from GCS (for backward compatibility)
+                self.output_gcs_path = self.gcs.get_gcs_path(
+                    self.session_id, 
+                    self.output_filename, 
+                    'output'
+                )
+                self.output_excel_path = Path(self.gcs.download_to_temp(self.output_gcs_path, suffix='.xlsx'))
+                print(f"[GCS] Downloaded output file from GCS: {self.output_excel_path}")
         else:
             self.output_excel_path = Path(output_excel_path)
     
@@ -138,9 +145,8 @@ class FinalSumApplier:
         output_wb.save(self.output_excel_path)
         output_wb.close()
         
-        # Upload to GCS
-        self.gcs.upload_file(str(self.output_excel_path), self.output_gcs_path)
-        print(f"[GCS] Uploaded to: gs://{self.gcs.bucket.name}/{self.output_gcs_path}")
+        # Note: File will be uploaded to GCS at the end of all processing in main.py
+        # No need to upload here for efficiency
         
         return {
             "last_data_row": last_data_row,
@@ -187,9 +193,8 @@ class FinalSumApplier:
         output_wb.save(self.output_excel_path)
         output_wb.close()
         
-        # Upload to GCS
-        self.gcs.upload_file(str(self.output_excel_path), self.output_gcs_path)
-        print(f"[GCS] Uploaded to: gs://{self.gcs.bucket.name}/{self.output_gcs_path}")
+        # Note: File will be uploaded to GCS at the end of all processing in main.py
+        # No need to upload here for efficiency
         
         return {
             "end_row": end_row,

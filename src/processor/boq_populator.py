@@ -21,25 +21,26 @@ def log_debug(message):
 session_id = os.getenv('SESSION_ID', 'default')
 is_merged = os.getenv('IS_MERGED', 'True').lower() == 'true'
 
-# Determine output filename based on is_merged
-# Note: BOQ populator should only run when is_merged=True, but we check for consistency
-if is_merged:
-    output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+# Use SESSION_OUTPUT_FILE if available (local file), otherwise fallback to GCS
+output_file = os.getenv('SESSION_OUTPUT_FILE', '')
+if output_file and os.path.exists(output_file):
+    boq_output_path = Path(output_file)
+    log_debug(f"Using local output file: {output_file}")
 else:
-    output_filename = f"{session_id}_main_carriageway.xlsx"
+    # Fallback: download from GCS (for backward compatibility)
+    gcs = get_gcs_handler()
+    if is_merged:
+        output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+    else:
+        output_filename = f"{session_id}_main_carriageway.xlsx"
+    output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
+    boq_output_path = Path(gcs.download_to_temp(output_gcs_path, suffix='.xlsx'))
+    log_debug(f"[GCS] Downloaded output file from GCS: {boq_output_path}")
 
 log_debug(f"=== BOQ POPULATOR - FORMULA WRITING TO TEMPLATE ===")
-log_debug(f"Using file: {output_filename}")
-
-# Initialize GCS
-gcs = get_gcs_handler()
 
 project_root = Path(__file__).parent.parent.parent
 boq_formula_json_path = project_root / 'boq_formula_mapping.json'
-
-# Download file from GCS
-output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
-boq_output_path = Path(gcs.download_to_temp(output_gcs_path, suffix='.xlsx'))
 
 try:
     # Load formula mapping from JSON
@@ -85,12 +86,16 @@ try:
     
     log_debug(f"Written {populated_count} formulas to merged template")
     
-    # Upload back to GCS
-    gcs.upload_file(str(boq_output_path), output_gcs_path)
-    log_debug(f"[GCS] Uploaded to: gs://{gcs.bucket.name}/{output_gcs_path}")
+    # Note: File will be uploaded to GCS at the end of all processing in main.py
+    # No need to upload here for efficiency
     
-    # Cleanup
-    os.remove(boq_output_path)
+    # Cleanup - only remove temp files, not the local output file
+    # Only remove if it's a temp file (not the local SESSION_OUTPUT_FILE)
+    if str(boq_output_path) != os.getenv('SESSION_OUTPUT_FILE', ''):
+        try:
+            os.remove(boq_output_path)
+        except:
+            pass
 
 except Exception as e:
     log_debug(f"ERROR: {str(e)}")

@@ -6,7 +6,7 @@ import sys
 import subprocess
 import threading
 from pathlib import Path
-from flask import Flask, request, jsonify, send_file, redirect
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import traceback
 import shutil
@@ -931,7 +931,7 @@ def download_file(session_id):
             }), 404
         
         # Generate signed URL for direct download from GCS
-        # URL expires in 10 minutes (600 seconds)
+        # URL expires in 1 hour (3600 seconds)
         response_disposition = f'attachment; filename="{output_filename}"'
         response_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         
@@ -942,8 +942,14 @@ def download_file(session_id):
             response_type=response_type
         )
         
-        # Redirect user directly to GCS signed URL
-        return redirect(signed_url, code=302)
+        # Return signed URL as JSON response
+        return jsonify({
+            'status': 'success',
+            'download_url': signed_url,
+            'filename': output_filename,
+            'expires_in_seconds': 3600,
+            'message': 'Download URL generated successfully'
+        }), 200
     
     except Exception as e:
         print(f"Error downloading file: {str(e)}")
@@ -1294,8 +1300,15 @@ def root():
             'download_file': {
                 'method': 'GET',
                 'path': '/api/download-file/<session_id>',
-                'description': 'Download the generated BOQ file (only available after completion)',
-                'usage': 'curl -X GET -O http://localhost:5000/api/download-file/your_session_id'
+                'description': 'Get signed URL for downloading the generated file (only available after completion). Returns JSON with download_url that expires in 1 hour.',
+                'response': {
+                    'status': 'success',
+                    'download_url': 'https://storage.googleapis.com/... (signed URL)',
+                    'filename': 'session_id_main_carriageway_and_boq.xlsx',
+                    'expires_in_seconds': 3600,
+                    'message': 'Download URL generated successfully'
+                },
+                'usage': 'curl -X GET http://localhost:5000/api/download-file/your_session_id'
             },
             'download_boq_file': {
                 'method': 'GET',

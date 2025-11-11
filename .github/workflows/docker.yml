@@ -5,6 +5,7 @@ on:
     branches:
       - backend_v2
       - implement_progress
+      - efficient_gcs
   workflow_dispatch:
 
 permissions:

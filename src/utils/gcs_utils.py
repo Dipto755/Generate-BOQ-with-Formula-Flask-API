@@ -8,6 +8,7 @@ import os
 import tempfile
 from pathlib import Path
 from dotenv import load_dotenv
+from datetime import timedelta
 
 load_dotenv()
 
@@ -72,6 +73,39 @@ class GCSHandler:
             return f"sessions/{session_id}/output/{filename}"
         else:
             return f"sessions/{session_id}/{filename}"
+    
+    def generate_signed_url(self, gcs_path, expires_in_seconds=600, response_disposition=None, response_type=None):
+        """
+        Generate a V4 signed URL for direct download from GCS
+        
+        Args:
+            gcs_path: Path to the file in GCS
+            expires_in_seconds: URL expiration time in seconds (default: 10 minutes)
+            response_disposition: Content-Disposition header value (e.g., 'attachment; filename="file.xlsx"')
+            response_type: Content-Type header value (e.g., 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        
+        Returns:
+            Signed URL string for direct download
+        """
+        blob = self.bucket.blob(gcs_path)
+        
+        # Build query parameters for signed URL
+        query_parameters = {}
+        if response_disposition:
+            query_parameters['response-content-disposition'] = response_disposition
+        if response_type:
+            query_parameters['response-content-type'] = response_type
+        
+        # Generate signed URL
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(seconds=expires_in_seconds),
+            method="GET",
+            query_parameters=query_parameters if query_parameters else None
+        )
+        
+        print(f"[GCS] Generated signed URL for: gs://{GCS_BUCKET_NAME}/{gcs_path} (expires in {expires_in_seconds}s)")
+        return url
 
 # Singleton instance
 _gcs_handler = None

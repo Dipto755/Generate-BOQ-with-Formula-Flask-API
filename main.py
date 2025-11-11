@@ -6,7 +6,7 @@ import sys
 import subprocess
 import threading
 from pathlib import Path
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, redirect
 from flask_cors import CORS
 import traceback
 import shutil
@@ -930,16 +930,20 @@ def download_file(session_id):
                 }
             }), 404
         
-        # Download to temp location
-        temp_file = gcs.download_to_temp(gcs_path, suffix='.xlsx')
+        # Generate signed URL for direct download from GCS
+        # URL expires in 10 minutes (600 seconds)
+        response_disposition = f'attachment; filename="{output_filename}"'
+        response_type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
         
-        # Send file to user
-        return send_file(
-            temp_file,
-            as_attachment=True,
-            download_name=output_filename,
-            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        signed_url = gcs.generate_signed_url(
+            gcs_path,
+            expires_in_seconds=3600,
+            response_disposition=response_disposition,
+            response_type=response_type
         )
+        
+        # Redirect user directly to GCS signed URL
+        return redirect(signed_url, code=302)
     
     except Exception as e:
         print(f"Error downloading file: {str(e)}")

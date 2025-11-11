@@ -28,13 +28,20 @@ if sys.platform == "win32":
 # NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 session_id = os.getenv('SESSION_ID', 'default')
+is_merged = os.getenv('IS_MERGED', 'True').lower() == 'true'
+
+# Determine output filename based on is_merged
+if is_merged:
+    output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+else:
+    output_filename = f"{session_id}_main_carriageway.xlsx"
 
 # Initialize GCS
 gcs = get_gcs_handler()
 
 # Download files from GCS
 pavement_gcs_path = gcs.get_gcs_path(session_id, 'Pavement Input.xlsx', 'data')
-output_gcs_path = gcs.get_gcs_path(session_id, f"{session_id}_main_carriageway_and_boq.xlsx", 'output')
+output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
 
 PAVEMENT_INPUT_FILE = gcs.download_to_temp(pavement_gcs_path, suffix='.xlsx')
 temp_main_file = gcs.download_to_temp(output_gcs_path, suffix='.xlsx')

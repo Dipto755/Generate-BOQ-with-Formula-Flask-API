@@ -32,12 +32,19 @@ class FinalSumApplier:
         self.session_id = os.getenv('SESSION_ID', 'default')
         self.gcs = get_gcs_handler()
         
+        # Determine output filename based on is_merged
+        is_merged = os.getenv('IS_MERGED', 'True').lower() == 'true'
+        if is_merged:
+            self.output_filename = f"{self.session_id}_main_carriageway_and_boq.xlsx"
+        else:
+            self.output_filename = f"{self.session_id}_main_carriageway.xlsx"
+        
         # Handle output path with GCS
         if output_excel_path is None:
             # Download from GCS to temp location
             self.output_gcs_path = self.gcs.get_gcs_path(
                 self.session_id, 
-                f"{self.session_id}_main_carriageway_and_boq.xlsx", 
+                self.output_filename, 
                 'output'
             )
             self.output_excel_path = Path(self.gcs.download_to_temp(self.output_gcs_path, suffix='.xlsx'))

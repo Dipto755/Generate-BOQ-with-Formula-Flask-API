@@ -45,8 +45,9 @@ REQUIRED_FILES = {
     'pavement_input': 'Pavement Input.xlsx'
 }
 
-# Template file
+# Template files
 TEMPLATE_FILE = TEMPLATE_DIR / 'main_carriageway_and_boq.xlsx'
+TEMPLATE_FILE_SINGLE = TEMPLATE_DIR / 'main_carriageway.xlsx'
 
 # Sequential script path
 SEQUENTIAL_SCRIPT = SRC_DIR / 'sequential.py'
@@ -63,9 +64,11 @@ def ensure_directories():
     TEMPLATE_DIR.mkdir(parents=True, exist_ok=True)
 
 def validate_template():
-    """Validate that template file exists"""
+    """Validate that template files exist"""
     if not TEMPLATE_FILE.exists():
         raise FileNotFoundError(f"Template file not found: {TEMPLATE_FILE}")
+    if not TEMPLATE_FILE_SINGLE.exists():
+        raise FileNotFoundError(f"Template file not found: {TEMPLATE_FILE_SINGLE}")
 
 def test_gcs_connection():
     """
@@ -164,9 +167,16 @@ def test_gcs_connection():
         print(traceback.format_exc())
         return False, error_msg
 
-def run_session_processing(session_id, session_data_dir, session_output_file):
+def run_session_processing(session_id, session_data_dir, session_output_file, is_merged=True):
     """
     Run the sequential processing for a specific session with progress tracking
+    
+    Args:
+        session_id: Session identifier
+        session_data_dir: Directory containing session data files
+        session_output_file: Output file path
+        is_merged: If True, process merged file (main_carriageway_and_boq) with BOQ. 
+                   If False, process single file (main_carriageway) without BOQ.
     """
     session_manager = SessionManager()
     
@@ -186,8 +196,12 @@ def run_session_processing(session_id, session_data_dir, session_output_file):
             {'script': 'pavement_input_with_internal', 'name': 'Geogrid Calculation', 'message': 'Calculating geogrid requirements...'},
             {'script': 'final_sum_applier', 'name': 'Final Summary', 'message': 'Generating final summary...'},
             # {'script': 'calculator', 'name': 'Formula Calculation', 'message': 'Calculating formula values...'},
-            {'script': 'boq_populator', 'name': 'BOQ Generation', 'message': 'Generating BOQ template...'},
         ]
+        
+        # Only add boq_populator step if is_merged is True
+        if is_merged:
+            processing_steps.append({'script': 'boq_populator', 'name': 'BOQ Generation', 'message': 'Generating BOQ template...'})
+        
         total_steps = len(processing_steps)
         
         # Initialize progress - starting first step (0% complete)
@@ -212,6 +226,7 @@ def run_session_processing(session_id, session_data_dir, session_output_file):
             env['SESSION_DATA_DIR'] = str(session_data_dir)
             env['SESSION_OUTPUT_FILE'] = str(session_output_file)
             env['SESSION_ID'] = session_id
+            env['IS_MERGED'] = 'True' if is_merged else 'False'
             
             # Run each script sequentially with proper progress tracking
             for step_num, step_info in enumerate(processing_steps, 1):
@@ -336,8 +351,8 @@ def run_session_processing(session_id, session_data_dir, session_output_file):
 def health_check():
     """Health check endpoint"""
     try:
-        # Check if template file exists
-        template_exists = TEMPLATE_FILE.exists()
+        # Check if template files exist
+        template_exists = TEMPLATE_FILE.exists() and TEMPLATE_FILE_SINGLE.exists()
         
         # Check MongoDB connection
         mongodb_healthy = False
@@ -369,8 +384,14 @@ def health_check():
             'checks': {
                 'template_file': {
                     'status': 'ok' if template_exists else 'error',
-                    'path': str(TEMPLATE_FILE),
-                    'exists': template_exists
+                    'merged_template': {
+                        'path': str(TEMPLATE_FILE),
+                        'exists': TEMPLATE_FILE.exists()
+                    },
+                    'single_template': {
+                        'path': str(TEMPLATE_FILE_SINGLE),
+                        'exists': TEMPLATE_FILE_SINGLE.exists()
+                    }
                 },
                 'mongodb': {
                     'status': 'ok' if mongodb_healthy else 'error',
@@ -525,7 +546,83 @@ def upload_files():
 
 @app.route('/api/execute-calculation', methods=['POST'])
 def execute_calculation():
-    """Execute calculations for a session (starts background thread)"""
+    """Execute calculations for main_carriageway only (starts background thread)"""
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+            
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'error': 'session_id is required'}), 400
+        
+        print(f"Looking for session: {session_id}")
+        
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            print(f"Session not found in database: {session_id}")
+            return jsonify({'error': 'Session not found'}), 404
+        
+        print(f"Found session: {session_id}, status: {session.get('status')}")
+        
+        if session['status'] != 'uploaded':
+            return jsonify({
+                'error': f"Cannot start calculation",
+                'message': f"Session status is '{session['status']}', must be 'uploaded'"
+            }), 400
+        
+        # Create session output directory
+        session_output_dir = OUTPUT_DIR / 'sessions' / session_id
+        session_output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = f"{session_id}_main_carriageway.xlsx"
+        session_output_file = session_output_dir / output_filename
+        
+        print(f"Creating output file: {session_output_file}")
+        
+        # Copy template to session output directory
+        if not TEMPLATE_FILE_SINGLE.exists():
+            return jsonify({'error': f'Template file not found: {TEMPLATE_FILE_SINGLE}'}), 500
+            
+        shutil.copy2(TEMPLATE_FILE_SINGLE, session_output_file)
+        print(f"Template copied to session output directory")
+        
+        # Update status to processing immediately
+        session_manager.update_session_status(session_id, 'processing')
+        print(f"Session status updated to 'processing'")
+        
+        # Start processing in background thread with is_merged=False
+        thread = threading.Thread(
+            target=run_session_processing,
+            args=(session_id, DATA_DIR / 'sessions' / session_id, session_output_file, False)
+        )
+        thread.daemon = True
+        thread.start()
+        
+        print(f"Background processing started for session: {session_id} (main_carriageway only)")
+        
+        return jsonify({
+            'status': 'success',
+            'session_id': session_id,
+            'message': 'Calculation started in background',
+            'output_file': output_filename
+        }), 200
+        
+    except Exception as e:
+        print(f"Error in execute_calculation: {str(e)}")
+        print(traceback.format_exc())
+        return jsonify({
+            'error': 'Execution failed',
+            'message': str(e),
+            'traceback': traceback.format_exc()
+        }), 500
+
+@app.route('/api/execute-calculation-merged', methods=['POST'])
+def execute_calculation_merged():
+    """Execute calculations for main_carriageway_and_boq (starts background thread)"""
     try:
         data = request.get_json()
         
@@ -573,15 +670,15 @@ def execute_calculation():
         session_manager.update_session_status(session_id, 'processing')
         print(f"Session status updated to 'processing'")
         
-        # Start processing in background thread
+        # Start processing in background thread with is_merged=True
         thread = threading.Thread(
             target=run_session_processing,
-            args=(session_id, DATA_DIR / 'sessions' / session_id, session_output_file)
+            args=(session_id, DATA_DIR / 'sessions' / session_id, session_output_file, True)
         )
         thread.daemon = True
         thread.start()
         
-        print(f"Background processing started for session: {session_id}")
+        print(f"Background processing started for session: {session_id} (main_carriageway_and_boq)")
         
         return jsonify({
             'status': 'success',
@@ -591,7 +688,7 @@ def execute_calculation():
         }), 200
         
     except Exception as e:
-        print(f"Error in execute_calculation: {str(e)}")
+        print(f"Error in execute_calculation_merged: {str(e)}")
         print(traceback.format_exc())
         return jsonify({
             'error': 'Execution failed',
@@ -601,7 +698,76 @@ def execute_calculation():
 
 @app.route('/api/execute-calculation-sync', methods=['POST'])
 def execute_calculation_sync():
-    """Execute calculations for a session (synchronous - waits for completion)"""
+    """Execute calculations for main_carriageway only (synchronous - waits for completion)"""
+    try:
+        data = request.get_json()
+        session_id = data.get('session_id')
+        
+        if not session_id:
+            return jsonify({'error': 'session_id is required'}), 400
+        
+        session_manager = SessionManager()
+        session = session_manager.get_session(session_id)
+        
+        if not session:
+            return jsonify({'error': 'Session not found'}), 404
+        
+        if session['status'] != 'uploaded':
+            return jsonify({
+                'error': f"Cannot start calculation",
+                'message': f"Session status is '{session['status']}', must be 'uploaded'"
+            }), 400
+        
+        # Create session output file
+        session_output_dir = OUTPUT_DIR / 'sessions' / session_id
+        session_output_dir.mkdir(parents=True, exist_ok=True)
+        output_filename = f"{session_id}_main_carriageway.xlsx"
+        session_output_file = session_output_dir / output_filename
+        
+        # Copy template to session output directory
+        if not TEMPLATE_FILE_SINGLE.exists():
+            return jsonify({'error': f'Template file not found: {TEMPLATE_FILE_SINGLE}'}), 500
+        
+        shutil.copy2(TEMPLATE_FILE_SINGLE, session_output_file)
+        
+        # Run processing synchronously (blocks until completion) with is_merged=False
+        try:
+            run_session_processing(session_id, DATA_DIR / 'sessions' / session_id, session_output_file, False)
+            
+            # Check if processing was successful
+            updated_session = session_manager.get_session(session_id)
+            if updated_session['status'] == 'completed':
+                return jsonify({
+                    'status': 'success',
+                    'session_id': session_id,
+                    'message': 'Calculation completed successfully',
+                    'output_file': output_filename,
+                    'execution_time_seconds': updated_session['processing_info'].get('execution_time_seconds')
+                }), 200
+            else:
+                return jsonify({
+                    'error': 'Calculation failed',
+                    'session_id': session_id,
+                    'message': updated_session['error_info'].get('error_message', 'Unknown error'),
+                    'failed_script': updated_session['error_info'].get('failed_script')
+                }), 500
+                
+        except Exception as processing_error:
+            return jsonify({
+                'error': 'Processing error',
+                'session_id': session_id,
+                'message': str(processing_error)
+            }), 500
+        
+    except Exception as e:
+        return jsonify({
+            'error': 'Execution failed',
+            'message': str(e)
+        }), 500
+
+@app.route('/api/execute-calculation-sync-merged', methods=['POST'])
+def execute_calculation_sync_merged():
+    """Execute calculations for main_carriageway_and_boq (synchronous - waits for completion)"""
     try:
         data = request.get_json()
         session_id = data.get('session_id')
@@ -628,11 +794,14 @@ def execute_calculation_sync():
         session_output_file = session_output_dir / output_filename
         
         # Copy template to session output directory
+        if not TEMPLATE_FILE.exists():
+            return jsonify({'error': f'Template file not found: {TEMPLATE_FILE}'}), 500
+        
         shutil.copy2(TEMPLATE_FILE, session_output_file)
         
-        # Run processing synchronously (blocks until completion)
+        # Run processing synchronously (blocks until completion) with is_merged=True
         try:
-            run_session_processing(session_id, DATA_DIR / 'sessions' / session_id, session_output_file)
+            run_session_processing(session_id, DATA_DIR / 'sessions' / session_id, session_output_file, True)
             
             # Check if processing was successful
             updated_session = session_manager.get_session(session_id)
@@ -705,7 +874,8 @@ def get_session_status(session_id):
 @app.route('/api/download-file/<session_id>', methods=['GET'])
 def download_file(session_id):
     """
-    Download the generated main carriageway file from GCS
+    Download the generated output file from GCS
+    Returns main_carriageway_and_boq.xlsx if it exists, otherwise main_carriageway.xlsx
     """
     try:
         session_manager = SessionManager()
@@ -724,15 +894,31 @@ def download_file(session_id):
         # Initialize GCS
         gcs = get_gcs_handler()
         
-        # Download from GCS to temp location
-        output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
-        gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
+        # Check for both files, prioritize main_carriageway_and_boq if both exist
+        merged_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+        single_filename = f"{session_id}_main_carriageway.xlsx"
         
-        # Check if file exists in GCS
-        if not gcs.file_exists(gcs_path):
+        merged_gcs_path = gcs.get_gcs_path(session_id, merged_filename, 'output')
+        single_gcs_path = gcs.get_gcs_path(session_id, single_filename, 'output')
+        
+        # Determine which file to download
+        output_filename = None
+        gcs_path = None
+        
+        if gcs.file_exists(merged_gcs_path):
+            output_filename = merged_filename
+            gcs_path = merged_gcs_path
+        elif gcs.file_exists(single_gcs_path):
+            output_filename = single_filename
+            gcs_path = single_gcs_path
+        else:
             return jsonify({
                 'error': 'File not found in GCS',
-                'gcs_path': gcs_path
+                'message': 'Neither main_carriageway.xlsx nor main_carriageway_and_boq.xlsx found',
+                'checked_paths': {
+                    'merged': merged_gcs_path,
+                    'single': single_gcs_path
+                }
             }), 404
         
         # Download to temp location
@@ -897,17 +1083,30 @@ def get_output_file_paths(session_id):
         # Get file paths
         file_paths = {}
         
-        # Main output file (main_carriageway_and_boq)
-        main_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
-        main_gcs_path = gcs.get_gcs_path(session_id, main_filename, 'output')
+        # Check for merged file (main_carriageway_and_boq)
+        merged_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+        merged_gcs_path = gcs.get_gcs_path(session_id, merged_filename, 'output')
         
-        if gcs.file_exists(main_gcs_path):
+        if gcs.file_exists(merged_gcs_path):
             file_paths['main_carriageway_and_boq'] = {
-                'filename': main_filename,
-                'gcs_path': main_gcs_path,
-                'gcs_uri': f"gs://{gcs.bucket.name}/{main_gcs_path}",
+                'filename': merged_filename,
+                'gcs_path': merged_gcs_path,
+                'gcs_uri': f"gs://{gcs.bucket.name}/{merged_gcs_path}",
                 'download_url': f"/api/download-file/{session_id}",
-                'file_type': 'main_output'
+                'file_type': 'main_output_merged'
+            }
+        
+        # Check for single file (main_carriageway)
+        single_filename = f"{session_id}_main_carriageway.xlsx"
+        single_gcs_path = gcs.get_gcs_path(session_id, single_filename, 'output')
+        
+        if gcs.file_exists(single_gcs_path):
+            file_paths['main_carriageway'] = {
+                'filename': single_filename,
+                'gcs_path': single_gcs_path,
+                'gcs_uri': f"gs://{gcs.bucket.name}/{single_gcs_path}",
+                'download_url': f"/api/download-file/{session_id}",
+                'file_type': 'main_output_single'
             }
         
         # BOQ file (if exists)
@@ -1030,20 +1229,38 @@ def root():
             'execute_calculation': {
                 'method': 'POST',
                 'path': '/api/execute-calculation',
-                'description': 'Start BOQ calculation for a session (runs in background)',
+                'description': 'Start calculation for main_carriageway only (runs in background)',
                 'request_body': {
                     'session_id': 'string (required)'
                 },
                 'usage': 'curl -X POST -H "Content-Type: application/json" -d \'{"session_id": "your_session_id"}\' http://localhost:5000/api/execute-calculation'
             },
+            'execute_calculation_merged': {
+                'method': 'POST',
+                'path': '/api/execute-calculation-merged',
+                'description': 'Start calculation for main_carriageway_and_boq (runs in background)',
+                'request_body': {
+                    'session_id': 'string (required)'
+                },
+                'usage': 'curl -X POST -H "Content-Type: application/json" -d \'{"session_id": "your_session_id"}\' http://localhost:5000/api/execute-calculation-merged'
+            },
             'execute_calculation_sync': {
                 'method': 'POST',
                 'path': '/api/execute-calculation-sync',
-                'description': 'Start BOQ calculation for a session (waits for completion)',
+                'description': 'Start calculation for main_carriageway only (waits for completion)',
                 'request_body': {
                     'session_id': 'string (required)'
                 },
                 'usage': 'curl -X POST -H "Content-Type: application/json" -d \'{"session_id": "your_session_id"}\' http://localhost:5000/api/execute-calculation-sync'
+            },
+            'execute_calculation_sync_merged': {
+                'method': 'POST',
+                'path': '/api/execute-calculation-sync-merged',
+                'description': 'Start calculation for main_carriageway_and_boq (waits for completion)',
+                'request_body': {
+                    'session_id': 'string (required)'
+                },
+                'usage': 'curl -X POST -H "Content-Type: application/json" -d \'{"session_id": "your_session_id"}\' http://localhost:5000/api/execute-calculation-sync-merged'
             },
             'session_list': {
                 'method': 'GET',
@@ -1090,10 +1307,10 @@ def root():
             'steps': [
                 '1. Upload 4 required Excel files using /api/upload-files',
                 '2. Get session_id from upload response',
-                '3. Start calculation using /api/execute-calculation with session_id',
+                '3. Start calculation using /api/execute-calculation (main_carriageway only) or /api/execute-calculation-merged (main_carriageway_and_boq) with session_id',
                 '4. Monitor progress using /api/session-status/<session_id>',
                 '5. Download result using /api/download-file/<session_id> when status is "completed"',
-                '6. Download BOQ file using /api/download-boq/<session_id>',
+                '6. Download BOQ file using /api/download-boq/<session_id> (only for merged calculation)',
                 '7. Download session ZIP file using /api/download-session/<session_id>'
             ]
         },
@@ -1147,10 +1364,11 @@ if __name__ == '__main__':
     # Ensure directories exist on startup
     ensure_directories()
     
-    # Validate template exists
+    # Validate templates exist
     try:
         validate_template()
-        print(f"✓ Template file found: {TEMPLATE_FILE}")
+        print(f"✓ Merged template file found: {TEMPLATE_FILE}")
+        print(f"✓ Single template file found: {TEMPLATE_FILE_SINGLE}")
     except FileNotFoundError as e:
         print(f"⚠ WARNING: {e}")
     
@@ -1168,8 +1386,10 @@ if __name__ == '__main__':
     print("  GET  /                                    - API root")
     print("  GET  /health                              - Health check")
     print("  POST /api/upload-files                    - Upload files & create session")
-    print("  POST /api/execute-calculation             - Start calculation")
-    print("  POST /api/execute-calculation-sync        - Start calculation (synchronous)")
+    print("  POST /api/execute-calculation             - Start calculation (main_carriageway only)")
+    print("  POST /api/execute-calculation-merged       - Start calculation (main_carriageway_and_boq)")
+    print("  POST /api/execute-calculation-sync         - Start calculation (main_carriageway only, synchronous)")
+    print("  POST /api/execute-calculation-sync-merged - Start calculation (main_carriageway_and_boq, synchronous)")
     print("  GET  /api/session-status/<id>             - Check session status")
     print("  GET  /api/download-file/<id>              - Download result")
     print("  GET  /api/download-boq/<id>               - Download BOQ file")

@@ -19,8 +19,17 @@ def log_debug(message):
 
 # Use session directories from environment
 session_id = os.getenv('SESSION_ID', 'default')
+is_merged = os.getenv('IS_MERGED', 'True').lower() == 'true'
 
-log_debug(f"=== BOQ POPULATOR - FORMULA WRITING TO MERGED TEMPLATE ===")
+# Determine output filename based on is_merged
+# Note: BOQ populator should only run when is_merged=True, but we check for consistency
+if is_merged:
+    output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+else:
+    output_filename = f"{session_id}_main_carriageway.xlsx"
+
+log_debug(f"=== BOQ POPULATOR - FORMULA WRITING TO TEMPLATE ===")
+log_debug(f"Using file: {output_filename}")
 
 # Initialize GCS
 gcs = get_gcs_handler()
@@ -29,7 +38,7 @@ project_root = Path(__file__).parent.parent.parent
 boq_formula_json_path = project_root / 'boq_formula_mapping.json'
 
 # Download file from GCS
-output_gcs_path = gcs.get_gcs_path(session_id, f"{session_id}_main_carriageway_and_boq.xlsx", 'output')
+output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
 boq_output_path = Path(gcs.download_to_temp(output_gcs_path, suffix='.xlsx'))
 
 try:

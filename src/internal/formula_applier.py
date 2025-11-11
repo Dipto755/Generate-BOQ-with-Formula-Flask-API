@@ -32,12 +32,19 @@ class FormulaApplier:
         self.session_id = os.getenv('SESSION_ID', 'default')
         self.gcs = get_gcs_handler()
         
+        # Determine output filename based on is_merged
+        is_merged = os.getenv('IS_MERGED', 'True').lower() == 'true'
+        if is_merged:
+            self.output_filename = f"{self.session_id}_main_carriageway_and_boq.xlsx"
+        else:
+            self.output_filename = f"{self.session_id}_main_carriageway.xlsx"
+        
         # Handle input/output paths with GCS
         if input_excel_path is None:
             # Download from GCS to temp location
             self.output_gcs_path = self.gcs.get_gcs_path(
                 self.session_id, 
-                f"{self.session_id}_main_carriageway_and_boq.xlsx", 
+                self.output_filename, 
                 'output'
             )
             self.input_excel_path = Path(self.gcs.download_to_temp(self.output_gcs_path, suffix='.xlsx'))
@@ -78,7 +85,7 @@ class FormulaApplier:
         
         if not self.input_excel_path.exists():
             # Try alternative path - one level up from src/internal to src/data/
-            alternative_path = Path(__file__).parent.parent / "data" / "main_carriageway_and_boq.xlsx"
+            alternative_path = Path(__file__).parent.parent / "data" / self.output_filename
             print(f"Trying alternative path: {alternative_path}")
             print(f"Alternative path exists: {alternative_path.exists()}")
             

@@ -20,7 +20,17 @@ if sys.platform == "win32":
 # NEW CODE:
 script_dir = os.path.dirname(os.path.abspath(__file__))
 session_id = os.getenv('SESSION_ID', 'default')
-template_file = os.path.join(script_dir, '..', '..', 'template', 'main_carriageway_and_boq.xlsx')
+is_merged = os.getenv('IS_MERGED', 'True').lower() == 'true'
+
+# Determine template and output filename based on is_merged
+if is_merged:
+    template_filename = 'main_carriageway_and_boq.xlsx'
+    output_filename = f"{session_id}_main_carriageway_and_boq.xlsx"
+else:
+    template_filename = 'main_carriageway.xlsx'
+    output_filename = f"{session_id}_main_carriageway.xlsx"
+
+template_file = os.path.join(script_dir, '..', '..', 'template', template_filename)
 
 # Initialize GCS
 gcs = get_gcs_handler()
@@ -31,7 +41,7 @@ input_gcs_path = gcs.get_gcs_path(session_id, 'TCS Schedule.xlsx', 'data')
 input_file = gcs.download_to_temp(input_gcs_path, suffix='.xlsx')
 
 # Temp output file
-output_file = os.path.join(temp_dir, f"{session_id}_main_carriageway_and_boq.xlsx")
+output_file = os.path.join(temp_dir, output_filename)
 output_dir = temp_dir
 
 # Create output directory if it doesn't exist
@@ -83,7 +93,7 @@ print(f"Starting from row: 7, column: A")
 print(f"Total data rows written: {len(df_output)}")
 
 # Upload to GCS
-output_gcs_path = gcs.get_gcs_path(session_id, f"{session_id}_main_carriageway_and_boq.xlsx", 'output')
+output_gcs_path = gcs.get_gcs_path(session_id, output_filename, 'output')
 gcs.upload_file(output_file, output_gcs_path)
 print(f"[GCS] Uploaded to: gs://{gcs.bucket.name}/{output_gcs_path}")
 

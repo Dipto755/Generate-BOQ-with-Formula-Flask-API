@@ -254,10 +254,10 @@ def run_session_processing(session_id, session_data_dir, session_output_file, is
                 else:
                     script_path = SRC_DIR / 'internal' / f'{script_name}.py'
                 
-                # Run the script
+                # Run the script - output goes directly to console for real-time visibility
                 result = subprocess.run(
                     [sys.executable, str(script_path)],
-                    capture_output=True,
+                    capture_output=False,  # Allow real-time output to console
                     text=True,
                     timeout=300,  # 5 minute timeout per script
                     env=env,
@@ -265,11 +265,7 @@ def run_session_processing(session_id, session_data_dir, session_output_file, is
                 )
                 
                 if result.returncode != 0:
-                    error_msg = f"Script {step_name} failed with exit code {result.returncode}\n"
-                    if result.stdout:
-                        error_msg += f"STDOUT:\n{result.stdout}\n"
-                    if result.stderr:
-                        error_msg += f"STDERR:\n{result.stderr}\n"
+                    error_msg = f"Script {step_name} failed with exit code {result.returncode}"
                     raise RuntimeError(error_msg)
                 
                 # Update progress AFTER step completion
